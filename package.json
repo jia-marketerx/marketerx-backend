@@ -1,0 +1,50 @@
+{
+  "name": "marketerx-chat-backend",
+  "version": "1.0.0",
+  "description": "MarketerX Two-Tier AI Chat System with LangGraph",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext .ts"
+  },
+  "keywords": [
+    "marketerx",
+    "ai",
+    "chat",
+    "langgraph",
+    "anthropic"
+  ],
+  "author": "MarketerX Team",
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
+    "@langchain/anthropic": "^0.3.7",
+    "@langchain/community": "^0.3.14",
+    "@langchain/core": "^0.3.21",
+    "@langchain/langgraph": "^0.2.19",
+    "@langchain/openai": "^0.3.12",
+    "@supabase/supabase-js": "^2.47.10",
+    "dotenv": "^16.4.7",
+    "fastify": "^5.2.0",
+    "ioredis": "^5.4.2",
+    "openai": "^4.77.3",
+    "tavily": "^1.0.3",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@typescript-eslint/eslint-plugin": "^8.19.1",
+    "@typescript-eslint/parser": "^8.19.1",
+    "eslint": "^9.18.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
+
