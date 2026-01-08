@@ -12,6 +12,7 @@ async function start() {
 
     // Create server
     const server = await createServer();
+    logger.info('🔍 Server created');
 
     // Connect to Redis
     await redis.connect();
@@ -39,7 +40,10 @@ async function start() {
       });
     });
   } catch (error) {
-    logger.error('Failed to start server', error);
+    logger.error('Failed to start server', {
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     process.exit(1);
   }
 }

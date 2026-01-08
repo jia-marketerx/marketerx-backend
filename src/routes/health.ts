@@ -7,7 +7,7 @@ import { testRedisConnection } from '../lib/redis.js';
  */
 export async function healthRoutes(fastify: FastifyInstance) {
   // Basic health check
-  fastify.get('/health', async (request, reply) => {
+  fastify.get('/health', async () => {
     return {
       status: 'ok',
       timestamp: new Date().toISOString(),
@@ -16,7 +16,7 @@ export async function healthRoutes(fastify: FastifyInstance) {
   });
 
   // Detailed health check with dependencies
-  fastify.get('/health/detailed', async (request, reply) => {
+  fastify.get('/health/detailed', async (_request, reply) => {
     const dbHealthy = await testDatabaseConnection();
     const redisHealthy = await testRedisConnection();
 

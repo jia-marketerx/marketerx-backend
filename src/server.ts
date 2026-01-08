@@ -22,25 +22,31 @@ export async function createServer() {
 
   // Global error handler
   fastify.setErrorHandler((error, request, reply) => {
+    const err = error as Error & { statusCode?: number; code?: string };
+    
     logger.error('Server error', {
-      error: error.message,
-      stack: error.stack,
+      error: err.message,
+      stack: err.stack,
       url: request.url,
       method: request.method,
     });
 
-    reply.status(error.statusCode || 500).send({
+    reply.status(err.statusCode || 500).send({
       error: {
-        message: config.server.isDevelopment ? error.message : 'Internal Server Error',
-        code: error.code || 'INTERNAL_ERROR',
+        message: config.server.isDevelopment ? err.message : 'Internal Server Error',
+        code: err.code || 'INTERNAL_ERROR',
       },
     });
   });
 
   // Register routes
   await fastify.register(healthRoutes);
+  
+  // Register conversation routes
+  const { conversationRoutes } = await import('./routes/conversations.js');
+  await fastify.register(conversationRoutes, { prefix: '/api/v1' });
 
-  // TODO: Register chat routes
+  // TODO: Register chat streaming route
   // await fastify.register(chatRoutes, { prefix: '/api/v1/chat' });
 
   return fastify;
