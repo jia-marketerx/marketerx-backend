@@ -46,8 +46,9 @@ export async function createServer() {
   const { conversationRoutes } = await import('./routes/conversations.js');
   await fastify.register(conversationRoutes, { prefix: '/api/v1' });
 
-  // TODO: Register chat streaming route
-  // await fastify.register(chatRoutes, { prefix: '/api/v1/chat' });
+  // Register chat streaming routes
+  const { chatRoutes } = await import('./routes/chat.js');
+  await fastify.register(chatRoutes, { prefix: '/api/v1/chat' });
 
   return fastify;
 }
