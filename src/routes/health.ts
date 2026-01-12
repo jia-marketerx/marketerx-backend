@@ -1,6 +1,8 @@
 import { FastifyInstance } from 'fastify';
 import { testDatabaseConnection } from '../lib/supabase.js';
 import { testRedisConnection } from '../lib/redis.js';
+import { testAnthropicConnection } from '../lib/anthropic.js';
+import { testOpenAIConnection } from '../lib/openai.js';
 
 /**
  * Health check routes

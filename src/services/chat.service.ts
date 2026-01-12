@@ -1,5 +1,6 @@
 import { conversationService } from './conversation.service.js';
 import { messageRepository } from '../repositories/messages.js';
+import { agentService } from './agent.service.js';
 import { SSEStream } from '../utils/sse.js';
 import { ChatStreamRequest, Message, ChatError } from '../types/index.js';
 import { logger } from '../utils/logger.js';
@@ -61,43 +62,28 @@ export class ChatService {
         messageCount: context.length,
       });
 
-      // 4. Process with AI (mock for now - will be replaced with LangGraph)
-      stream.thinking('agent_reasoning', 'Analyzing your request...');
+      // 4. Process with AI agents (Tier 1 Orchestrator)
+      stream.thinking('agent_reasoning', 'Processing with AI agents...');
       
-      // Simulate thinking delay
-      await this.delay(500);
-
-      // Mock response (Phase 4 will replace this with real LangGraph orchestration)
-      const mockResponse = this.generateMockResponse(request.message, context);
-
-      // Stream mock response
-      stream.thinking('agent_reasoning', 'Generating response...');
-      
-      // Simulate streaming chunks
-      const chunks = this.splitIntoChunks(mockResponse, 20);
-      
-      stream.message('', 'streaming-start');
-      
-      for (const chunk of chunks) {
-        stream.send({
-          event: 'message',
-          data: {
-            role: 'assistant',
-            content: chunk,
-            messageId: 'streaming',
-          },
-        });
-        await this.delay(50); // Simulate streaming delay
-      }
+      const agentResult = await agentService.processWithAgents(
+        conversationId,
+        userId,
+        businessProfileId,
+        request.message,
+        context,
+        stream
+      );
 
       // 5. Save assistant message
       const assistantMessage = await messageRepository.create({
         conversationId,
         role: 'assistant',
-        content: mockResponse,
-        agentId: 'mock_agent',
+        content: agentResult.response,
+        agentId: 'tier1_orchestrator',
+        inputTokens: agentResult.tokensUsed?.input,
+        outputTokens: agentResult.tokensUsed?.output,
         metadata: {
-          modelUsed: 'mock',
+          modelUsed: agentResult.modelUsed,
           contextLength: context.length,
         },
       });
@@ -105,11 +91,12 @@ export class ChatService {
       logger.info('Assistant message saved', {
         conversationId,
         messageId: assistantMessage.id,
-        contentLength: mockResponse.length,
+        contentLength: agentResult.response.length,
+        tokensUsed: agentResult.tokensUsed,
       });
 
       // 6. Send completion
-      stream.message(mockResponse, assistantMessage.id);
+      stream.message(agentResult.response, assistantMessage.id);
       stream.done(conversationId, context.length + 2);
 
       logger.info('Chat interaction completed', {
@@ -139,44 +126,6 @@ export class ChatService {
       return message;
     }
     return message.substring(0, maxLength - 3) + '...';
-  }
-
-  /**
-   * Generate mock response (will be replaced with real AI in Phase 4)
-   */
-  private generateMockResponse(userMessage: string, context: Message[]): string {
-    const responseTemplates = [
-      `Thank you for your message! You said: "${userMessage}". This is a mock response. In Phase 4, I'll be powered by Claude and LangGraph to provide intelligent marketing assistance.`,
-      
-      `I understand you're interested in: "${userMessage}". Currently, I'm in development mode. Once Phase 4 is complete, I'll be able to help you with content creation, research, and strategic marketing advice using advanced AI capabilities.`,
-      
-      `Got it! Your message was: "${userMessage}". I'm a placeholder response for now. Soon, I'll leverage Claude 3.5 Sonnet for strategic thinking and Haiku for rapid content generation.`,
-    ];
-
-    // Simple logic to vary responses
-    const index = context.length % responseTemplates.length;
-    return responseTemplates[index];
-  }
-
-  /**
-   * Split text into chunks for streaming simulation
-   */
-  private splitIntoChunks(text: string, chunkSize: number): string[] {
-    const words = text.split(' ');
-    const chunks: string[] = [];
-    
-    for (let i = 0; i < words.length; i += chunkSize) {
-      chunks.push(words.slice(i, i + chunkSize).join(' ') + ' ');
-    }
-    
-    return chunks;
-  }
-
-  /**
-   * Utility delay function
-   */
-  private delay(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }
 
