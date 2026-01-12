@@ -21,8 +21,10 @@ export async function healthRoutes(fastify: FastifyInstance) {
   fastify.get('/health/detailed', async (_request, reply) => {
     const dbHealthy = await testDatabaseConnection();
     const redisHealthy = await testRedisConnection();
+    const anthropicHealthy = await testAnthropicConnection();
+    const openaiHealthy = await testOpenAIConnection();
 
-    const isHealthy = dbHealthy && redisHealthy;
+    const isHealthy = dbHealthy && redisHealthy && anthropicHealthy && openaiHealthy;
 
     return reply.code(isHealthy ? 200 : 503).send({
       status: isHealthy ? 'ok' : 'degraded',
@@ -31,6 +33,8 @@ export async function healthRoutes(fastify: FastifyInstance) {
       services: {
         database: dbHealthy ? 'ok' : 'error',
         redis: redisHealthy ? 'ok' : 'error',
+        anthropic: anthropicHealthy ? 'ok' : 'error',
+        openai: openaiHealthy ? 'ok' : 'error',
       },
     });
   });
