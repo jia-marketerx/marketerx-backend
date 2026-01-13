@@ -5,7 +5,7 @@ import { config } from '../config/env.js';
  * OpenAI client for GPT models and embeddings
  */
 export const openai = new OpenAI({
-  apiKey: config.ai.openai.apiKey,
+  apiKey: config.api.openai,
 });
 
 /**

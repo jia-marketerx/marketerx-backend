@@ -102,7 +102,7 @@ export async function chatRoutes(fastify: FastifyInstance) {
    * Get available models
    * GET /models
    */
-  fastify.get('/models', async (request, reply) => {
+  fastify.get('/models', async () => {
     return {
       models: {
         tier1: [

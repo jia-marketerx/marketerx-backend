@@ -34,17 +34,17 @@ export interface AgentState {
 }
 
 export interface ToolCallInfo {
-  id: string;
-  name: string;
+  toolName: string;
   input: any;
-  timestamp: Date;
+  timestamp: number;
 }
 
 export interface ToolResultInfo {
-  toolCallId: string;
-  output: any;
-  isError: boolean;
-  timestamp: Date;
+  toolName: string;
+  result: any;
+  success: boolean;
+  error?: string;
+  timestamp: number;
 }
 
 /**

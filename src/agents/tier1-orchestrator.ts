@@ -3,6 +3,7 @@ import { config } from '../config/env.js';
 import { AgentState, AgentConfig, ToolCallInfo, ToolResultInfo } from './types.js';
 import { SSEStream } from '../utils/sse.js';
 import { logger } from '../utils/logger.js';
+import { toolDefinitions, toolExecutor } from './tools.js';
 import Anthropic from '@anthropic-ai/sdk';
 
 /**
@@ -53,25 +54,31 @@ export class Tier1Orchestrator {
 
       // Process streaming response
       let fullResponse = '';
-      let currentThinking = '';
       const toolCalls: ToolCallInfo[] = [];
+      const contentBlocks: any[] = [];
       let inputTokens = 0;
       let outputTokens = 0;
+      let stopReason: string | null = null;
 
       for await (const event of response) {
         if (event.type === 'message_start') {
           inputTokens = event.message.usage.input_tokens;
         } else if (event.type === 'content_block_start') {
+          contentBlocks[event.index] = { type: event.content_block.type };
+          
           if (event.content_block.type === 'text') {
-            // Text content starting
+            contentBlocks[event.index].text = '';
           } else if (event.content_block.type === 'tool_use') {
-            // Tool call starting
+            contentBlocks[event.index].id = event.content_block.id;
+            contentBlocks[event.index].name = event.content_block.name;
+            contentBlocks[event.index].input = {};
             this.stream.thinking('tool_status', `Calling tool: ${event.content_block.name}`);
           }
         } else if (event.type === 'content_block_delta') {
           if (event.delta.type === 'text_delta') {
             // Stream text chunks
             const chunk = event.delta.text;
+            contentBlocks[event.index].text += chunk;
             fullResponse += chunk;
             
             // Send streaming chunks to frontend
@@ -84,15 +91,78 @@ export class Tier1Orchestrator {
               },
             });
           } else if (event.delta.type === 'input_json_delta') {
-            // Tool input being built (we'll process when complete)
+            // Tool input being built
+            contentBlocks[event.index].input = {
+              ...contentBlocks[event.index].input,
+              ...JSON.parse(event.delta.partial_json),
+            };
           }
         } else if (event.type === 'content_block_stop') {
           // Content block finished
         } else if (event.type === 'message_delta') {
           outputTokens = event.usage.output_tokens;
+          stopReason = event.delta.stop_reason;
         } else if (event.type === 'message_stop') {
           // Message complete
         }
+      }
+
+      // If there were tool calls, execute them and continue the conversation
+      if (stopReason === 'tool_use') {
+        this.stream.thinking('tool_status', 'Processing tool calls...');
+        
+        for (const block of contentBlocks) {
+          if (block.type === 'tool_use') {
+            const toolCall: ToolCallInfo = {
+              toolName: block.name,
+              input: block.input,
+              timestamp: Date.now(),
+            };
+            toolCalls.push(toolCall);
+
+            // Execute tool
+            const toolResult = await toolExecutor.execute(
+              block.name,
+              block.input,
+              {
+                businessProfileId: state.businessProfileId || '',
+                conversationId: state.conversationId,
+              }
+            );
+
+            const toolResultInfo: ToolResultInfo = {
+              toolName: block.name,
+              result: toolResult.data,
+              success: toolResult.success,
+              error: toolResult.error,
+              timestamp: Date.now(),
+            };
+            state.toolResults.push(toolResultInfo);
+
+            this.stream.thinking(
+              'tool_status',
+              `Tool ${block.name} completed ${toolResult.success ? 'successfully' : 'with errors'}`
+            );
+
+            // If tool provided formatted output, send it as analysis
+            if (toolResult.data?.formatted) {
+              const analysisType = block.name.includes('knowledge') ? 'knowledge_summary' :
+                                   block.name.includes('web') ? 'research_summary' : 'knowledge_summary';
+              
+              this.stream.send({
+                event: 'analysis',
+                data: {
+                  type: analysisType,
+                  content: toolResult.data.formatted,
+                },
+              });
+            }
+          }
+        }
+
+        // Continue conversation with tool results
+        // This would require another call to Claude with tool results, which we'll implement in a more sophisticated way later
+        // For now, we'll just add the tool results to state
       }
 
       // Update state with response
@@ -132,26 +202,36 @@ Your role:
 - When content creation is needed, provide clear briefs for Tier 2 content agents
 - Maintain conversation context and help users refine their marketing strategy
 
-Capabilities:
-- Access to user's business knowledge base (brand guidelines, research reports, etc.)
-- Web search for real-time marketing trends and competitive intelligence
-- Strategic marketing frameworks and templates
-- Ability to call Tier 2 content execution agents for specific deliverables
+## Critical: Cache-First, Canon-Guided Architecture
+
+When handling content creation requests, ALWAYS follow this workflow:
+
+1. **Analyze Intent** - Understand what the user wants to create
+2. **Fetch Canon EARLY** - Use fetch-canon tool immediately to load frameworks, templates, and compliance rules
+   - Canon tells you WHAT to search for in the knowledge base
+   - Canon guides your entire approach
+3. **Knowledge Search (Canon-Guided)** - Use knowledge-search with queries informed by canon
+   - Example: Canon says "look for copywriting handbook" → search for it
+4. **Web Search (Optional)** - Only if real-time data is needed
+5. **Synthesize & Create Brief** - Combine canon + knowledge + research
+6. **Execute Content** - Call content-execution tool with comprehensive brief
+
+## Available Tools
+
+You have access to these tools:
+- **fetch-canon**: Load proprietary frameworks, templates, compliance rules (USE THIS FIRST!)
+- **knowledge-search**: Semantic search over user's business resources (guided by canon)
+- **knowledge-fetch**: Get full content of specific resource by ID
+- **web-search**: Real-time web search (optional, only when needed)
+- **content-execution**: Generate content via Tier 2 agent (provide comprehensive brief)
 
 Communication style:
 - Professional yet conversational
 - Strategic and data-driven
 - Transparent about your reasoning process
-- Proactive in suggesting marketing improvements
+- Stream your thinking so users see your workflow
 
-Current phase: Phase 4 (Basic orchestration)
-Note: Tool calling and Tier 2 integration will be added in Phase 5-6.
-
-For now, focus on:
-1. Understanding the user's marketing needs
-2. Providing strategic advice
-3. Planning what content or research would be helpful
-4. Engaging in marketing strategy discussions`;
+Remember: Canon is your guide. Load it early, use it to direct your searches.`;
   }
 
   /**
@@ -180,11 +260,10 @@ For now, focus on:
   }
 
   /**
-   * Get tool definitions (Phase 5 will implement actual tools)
+   * Get tool definitions
    */
   private getToolDefinitions(): any[] {
-    // Phase 5 will add: web-search, knowledge-search, fetch-canon, content-execution
-    return [];
+    return toolDefinitions;
   }
 }
 

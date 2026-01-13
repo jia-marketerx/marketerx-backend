@@ -82,16 +82,10 @@ export const config = {
     url: env.REDIS_URL,
     token: env.REDIS_TOKEN,
   },
-  ai: {
-    anthropic: {
-      apiKey: env.ANTHROPIC_API_KEY,
-    },
-    openai: {
-      apiKey: env.OPENAI_API_KEY,
-    },
-    tavily: {
-      apiKey: env.TAVILY_API_KEY,
-    },
+  api: {
+    anthropic: env.ANTHROPIC_API_KEY,
+    openai: env.OPENAI_API_KEY,
+    tavily: env.TAVILY_API_KEY,
   },
   langsmith: {
     enabled: env.LANGCHAIN_TRACING_V2 === 'true',
