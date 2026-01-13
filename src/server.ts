@@ -24,8 +24,8 @@ export async function createServer() {
   // Enable CORS
   await fastify.register(cors, {
     origin: config.server.isDevelopment 
-      ? ['http://localhost:3000', 'http://localhost:5173', 'http://localhost:5174', 'http://127.0.0.1:5173', 'null'] // Include 'null' for local file:// protocol
-      : (origin, cb) => {
+      ? true // Allow all origins in development
+      : (_origin, cb) => {
           // In production, validate against allowed origins
           // For now, allow all origins - you should restrict this in production
           cb(null, true);

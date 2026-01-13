@@ -160,6 +160,7 @@
 
   <script>
     let currentConversationId = null;
+    let currentStreamingMessageDiv = null;
 
     function addMessage(role, content, type = 'normal') {
       const messagesDiv = document.getElementById('messages');
@@ -168,6 +169,20 @@
       messageDiv.textContent = content;
       messagesDiv.appendChild(messageDiv);
       messagesDiv.scrollTop = messagesDiv.scrollHeight;
+      return messageDiv;
+    }
+
+    function updateStreamingMessage(content) {
+      if (!currentStreamingMessageDiv) {
+        currentStreamingMessageDiv = addMessage('assistant', '');
+      }
+      currentStreamingMessageDiv.textContent = content;
+      const messagesDiv = document.getElementById('messages');
+      messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    }
+
+    function finishStreamingMessage() {
+      currentStreamingMessageDiv = null;
     }
 
     function setStatus(text, loading = false) {
@@ -200,7 +215,7 @@
       setStatus('Sending message...', true);
 
       try {
-        const response = await fetch('http://localhost:3000/api/v1/chat/stream', {
+        const response = await fetch('http://localhost:5000/api/v1/chat/stream', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -221,6 +236,7 @@
         const decoder = new TextDecoder();
         let buffer = '';
         let assistantMessage = '';
+        let isStreaming = false;
 
         setStatus('Receiving response...', true);
 
@@ -243,14 +259,29 @@
               
               if (data.type === 'agent_reasoning' || data.type === 'tool_status') {
                 addMessage('thinking', `💭 ${data.content}`, 'thinking');
+              } else if (data.role === 'assistant' && data.messageId === 'streaming-start') {
+                // Start streaming
+                isStreaming = true;
+                assistantMessage = '';
               } else if (data.role === 'assistant' && data.messageId === 'streaming') {
-                // Streaming chunks
+                // Streaming chunks - display word by word
                 assistantMessage += data.content;
-              } else if (data.role === 'assistant' && data.messageId !== 'streaming-start') {
-                // Final message
-                addMessage('assistant', data.content);
+                updateStreamingMessage(assistantMessage);
+                isStreaming = true;
+              } else if (data.role === 'assistant' && data.messageId !== 'streaming' && data.messageId !== 'streaming-start') {
+                // Final message (non-streaming or end of stream)
+                if (isStreaming) {
+                  finishStreamingMessage();
+                  isStreaming = false;
+                } else {
+                  addMessage('assistant', data.content);
+                }
               } else if (data.conversationId) {
                 // Done event
+                if (isStreaming) {
+                  finishStreamingMessage();
+                  isStreaming = false;
+                }
                 currentConversationId = data.conversationId;
                 document.getElementById('conversationId').value = data.conversationId;
                 setStatus(`✅ Conversation ${data.conversationId.substring(0, 8)}... | ${data.messageCount} messages`);
@@ -266,6 +297,10 @@
         addMessage('error', `❌ ${error.message}`, 'error');
         setStatus('Connection error');
       } finally {
+        // Clean up streaming state
+        if (currentStreamingMessageDiv) {
+          finishStreamingMessage();
+        }
         // Re-enable input
         messageInput.disabled = false;
         sendButton.disabled = false;
