@@ -76,7 +76,7 @@ export interface ThinkingEvent {
 export interface AnalysisEvent {
   event: 'analysis';
   data: {
-    type: 'research_summary' | 'knowledge_summary';
+    type: 'research_summary' | 'knowledge_summary' | 'canon_loaded';
     content: string;
     sources?: any[];
     metadata?: Record<string, any>;

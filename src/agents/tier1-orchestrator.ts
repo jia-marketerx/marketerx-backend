@@ -1,6 +1,6 @@
 import { anthropic } from '../lib/anthropic.js';
 import { config } from '../config/env.js';
-import { AgentState, AgentConfig, ToolCallInfo, ToolResultInfo } from './types.js';
+import { AgentState, AgentConfig } from './types.js';
 import { SSEStream } from '../utils/sse.js';
 import { logger } from '../utils/logger.js';
 import Anthropic from '@anthropic-ai/sdk';
@@ -26,123 +26,203 @@ export class Tier1Orchestrator {
   }
 
   /**
-   * Run the orchestrator agent
+   * Run the orchestrator agent (with agentic loop for tool calling)
    */
   async run(state: AgentState): Promise<AgentState> {
     try {
       this.stream.thinking('agent_reasoning', 'Tier 1 orchestrator analyzing your request...');
 
-      // Build messages for Claude
-      const messages = this.buildMessages(state);
+      // Agentic loop: Keep calling Claude until no more tools are needed
+      let continueLoop = true;
+      let loopCount = 0;
+      const maxLoops = 5; // Prevent infinite loops
 
-      logger.info('Tier 1 orchestrator starting', {
-        conversationId: state.conversationId,
-        messageCount: messages.length,
-        toolsAvailable: this.config.tools.length,
-      });
+      while (continueLoop && loopCount < maxLoops) {
+        loopCount++;
+        
+        // Reset streaming flag for each iteration so each response creates a new block
+        let streamingStarted = false;
 
-      // Call Claude with streaming
-      const response = await anthropic.messages.create({
-        model: this.config.model,
-        max_tokens: this.config.maxTokens,
-        temperature: this.config.temperature,
-        system: this.config.systemPrompt,
-        messages: messages,
-        tools: this.config.tools.length > 0 ? this.config.tools : undefined,
-        stream: true,
-      });
+        // Build messages for Claude
+        const messages = this.buildMessages(state);
 
-      // Process streaming response
-      let fullResponse = '';
-      const toolUseBlocks: any[] = [];
-      let currentToolUse: any = null;
-      let inputTokens = 0;
-      let outputTokens = 0;
-      let stopReason = '';
+        logger.info('Tier 1 orchestrator iteration', {
+          conversationId: state.conversationId,
+          iteration: loopCount,
+          messageCount: messages.length,
+          toolsAvailable: this.config.tools.length,
+        });
 
-      for await (const event of response) {
-        if (event.type === 'message_start') {
-          inputTokens = event.message.usage.input_tokens;
-        } else if (event.type === 'content_block_start') {
-          if (event.content_block.type === 'text') {
-            // Text content starting
-          } else if (event.content_block.type === 'tool_use') {
-            // Tool call starting
-            this.stream.thinking('tool_status', `Preparing to call: ${event.content_block.name}`);
-            currentToolUse = {
-              id: event.content_block.id,
-              name: event.content_block.name,
-              input: {},
-            };
-          }
-        } else if (event.type === 'content_block_delta') {
-          if (event.delta.type === 'text_delta') {
-            // Stream text chunks
-            const chunk = event.delta.text;
-            fullResponse += chunk;
-            
-            // Send streaming chunks to frontend
-            this.stream.send({
-              event: 'message',
-              data: {
-                role: 'assistant',
-                content: chunk,
-                messageId: 'streaming',
-              },
-            });
-          } else if (event.delta.type === 'input_json_delta') {
-            // Build tool input JSON
-            if (currentToolUse) {
-              try {
-                const partial = event.delta.partial_json || '';
-                currentToolUse.inputJson = (currentToolUse.inputJson || '') + partial;
-              } catch (e) {
-                // Ignore parsing errors during streaming
+        // Call Claude with streaming
+        const response = await anthropic.messages.create({
+          model: this.config.model,
+          max_tokens: this.config.maxTokens,
+          temperature: this.config.temperature,
+          system: this.config.systemPrompt,
+          messages: messages,
+          tools: this.config.tools.length > 0 ? this.config.tools : undefined,
+          stream: true,
+        });
+
+        // Process streaming response
+        let fullResponse = '';
+        const toolUseBlocks: any[] = [];
+        const contentBlocks: any[] = [];
+        let currentToolUse: any = null;
+        let inputTokens = 0;
+        let outputTokens = 0;
+        let stopReason = '';
+
+        for await (const event of response) {
+          if (event.type === 'message_start') {
+            inputTokens = event.message.usage.input_tokens;
+          } else if (event.type === 'content_block_start') {
+            if (event.content_block.type === 'text') {
+              // Text content starting - send streaming-start event
+              if (!streamingStarted) {
+                this.stream.send({
+                  event: 'message',
+                  data: {
+                    role: 'assistant',
+                    content: '',
+                    messageId: 'streaming-start',
+                  },
+                });
+                streamingStarted = true;
+              }
+              contentBlocks.push({ type: 'text', text: '' });
+            } else if (event.content_block.type === 'tool_use') {
+              // Tool call starting
+              this.stream.thinking('tool_status', `Preparing to call: ${event.content_block.name}`);
+              currentToolUse = {
+                id: event.content_block.id,
+                name: event.content_block.name,
+                input: {},
+              };
+              contentBlocks.push({
+                type: 'tool_use',
+                id: event.content_block.id,
+                name: event.content_block.name,
+              });
+            }
+          } else if (event.type === 'content_block_delta') {
+            if (event.delta.type === 'text_delta') {
+              // Stream text chunks
+              const chunk = event.delta.text;
+              fullResponse += chunk;
+
+              // Update last text content block
+              const lastBlock = contentBlocks[contentBlocks.length - 1];
+              if (lastBlock && lastBlock.type === 'text') {
+                lastBlock.text += chunk;
+              }
+              
+              // Always stream chunks to frontend (all iterations)
+              this.stream.send({
+                event: 'message',
+                data: {
+                  role: 'assistant',
+                  content: chunk,
+                  messageId: 'streaming',
+                },
+              });
+            } else if (event.delta.type === 'input_json_delta') {
+              // Build tool input JSON
+              if (currentToolUse) {
+                try {
+                  const partial = event.delta.partial_json || '';
+                  currentToolUse.inputJson = (currentToolUse.inputJson || '') + partial;
+                } catch (e) {
+                  // Ignore parsing errors during streaming
+                }
               }
             }
-          }
-        } else if (event.type === 'content_block_stop') {
-          // Content block finished
-          if (currentToolUse) {
-            try {
-              currentToolUse.input = JSON.parse(currentToolUse.inputJson || '{}');
-              delete currentToolUse.inputJson;
-              toolUseBlocks.push(currentToolUse);
-            } catch (e) {
-              logger.error('Failed to parse tool input JSON:', e);
+          } else if (event.type === 'content_block_stop') {
+            // Content block finished
+            if (currentToolUse) {
+              try {
+                currentToolUse.input = JSON.parse(currentToolUse.inputJson || '{}');
+                delete currentToolUse.inputJson;
+                
+                // Add input to content block
+                const lastBlock = contentBlocks[contentBlocks.length - 1];
+                if (lastBlock && lastBlock.type === 'tool_use') {
+                  lastBlock.input = currentToolUse.input;
+                }
+                
+                toolUseBlocks.push(currentToolUse);
+              } catch (e) {
+                logger.error('Failed to parse tool input JSON:', e);
+              }
+              currentToolUse = null;
             }
-            currentToolUse = null;
+          } else if (event.type === 'message_delta') {
+            outputTokens = event.usage.output_tokens;
+            if (event.delta.stop_reason) {
+              stopReason = event.delta.stop_reason;
+            }
+          } else if (event.type === 'message_stop') {
+            // Message complete
           }
-        } else if (event.type === 'message_delta') {
-          outputTokens = event.usage.output_tokens;
-          if (event.delta.stop_reason) {
-            stopReason = event.delta.stop_reason;
-          }
-        } else if (event.type === 'message_stop') {
-          // Message complete
         }
+
+        // Update token usage
+        state.tokensUsed = {
+          input: (state.tokensUsed?.input || 0) + inputTokens,
+          output: (state.tokensUsed?.output || 0) + outputTokens,
+        };
+
+        // Execute tools if any were called
+        if (toolUseBlocks.length > 0 && stopReason === 'tool_use') {
+          logger.info(`Executing ${toolUseBlocks.length} tool calls...`);
+          
+          // Execute tools and get results
+          await this.processToolCalls(toolUseBlocks, state);
+
+          // Add assistant message with tool calls to conversation
+          state.conversationContext.push({
+            role: 'assistant',
+            content: contentBlocks,
+          } as any);
+
+          // Add tool results as user message for next iteration
+          const toolResultsMessage: any = {
+            role: 'user',
+            content: state.toolResults.slice(-toolUseBlocks.length).map((result) => ({
+              type: 'tool_result',
+              tool_use_id: result.toolCallId,
+              content: result.output,
+              is_error: result.isError,
+            })),
+          };
+
+          state.conversationContext.push(toolResultsMessage);
+
+          // Continue loop to let agent process tool results
+          continueLoop = true;
+        } else {
+          // No more tools to call, we're done
+          state.response = fullResponse;
+          continueLoop = false;
+        }
+
+        logger.info('Tier 1 orchestrator iteration completed', {
+          conversationId: state.conversationId,
+          iteration: loopCount,
+          responseLength: fullResponse.length,
+          toolCallsCount: toolUseBlocks.length,
+          stopReason,
+          continueLoop,
+        });
       }
 
-      // Execute tools if any were called
-      if (toolUseBlocks.length > 0) {
-        logger.info(`Executing ${toolUseBlocks.length} tool calls...`);
-        await this.processToolCalls(toolUseBlocks, state);
-      }
-
-      // Update state with response
-      state.response = fullResponse;
-      state.tokensUsed = {
-        input: inputTokens,
-        output: outputTokens,
-      };
       state.modelUsed = this.config.model;
 
       logger.info('Tier 1 orchestrator completed', {
         conversationId: state.conversationId,
-        responseLength: fullResponse.length,
-        tokensUsed: state.tokensUsed,
-        toolCallsCount: toolUseBlocks.length,
-        stopReason,
+        totalIterations: loopCount,
+        finalResponseLength: state.response.length,
+        totalTokensUsed: state.tokensUsed,
       });
 
       return state;
@@ -217,11 +297,21 @@ export class Tier1Orchestrator {
       }
     }
 
-    // Add current user message
-    messages.push({
-      role: 'user',
-      content: state.currentUserMessage,
-    });
+    // Add current user message if not already in context
+    // (Check if the last message is the current user message)
+    const lastMessage = messages[messages.length - 1];
+    const isCurrentMessageInContext =
+      lastMessage &&
+      lastMessage.role === 'user' &&
+      typeof lastMessage.content === 'string' &&
+      lastMessage.content === state.currentUserMessage;
+
+    if (!isCurrentMessageInContext) {
+      messages.push({
+        role: 'user',
+        content: state.currentUserMessage,
+      });
+    }
 
     return messages;
   }
