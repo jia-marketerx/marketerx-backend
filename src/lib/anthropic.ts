@@ -5,7 +5,7 @@ import { config } from '../config/env.js';
  * Anthropic client for Claude API
  */
 export const anthropic = new Anthropic({
-  apiKey: config.api.anthropic,
+  apiKey: config.ai.anthropic.apiKey,
 });
 
 /**

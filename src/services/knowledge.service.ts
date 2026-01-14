@@ -1,230 +1,261 @@
 /**
- * Knowledge Service
- * Semantic search over business resources (user-uploaded documents, guidelines)
+ * Knowledge Search Service
+ * 
+ * Semantic search across user's business resources using vector embeddings
+ * Searches: brand guidelines, offers, testimonials, case studies, handbooks, avatars
  */
 
-import { knowledgeRepository, type BusinessResource } from '../repositories/knowledge.js';
-import { embeddingService } from './embedding.service.js';
-import { cacheService } from './cache.service.js';
+import { supabase } from '../lib/supabase.js';
+import { openai } from '../lib/openai.js';
+import { CacheService, CacheLayer } from './cache.service.js';
 import { logger } from '../utils/logger.js';
 
 export interface KnowledgeSearchOptions {
-  resourceType?: 'document' | 'guideline' | 'reference' | 'example' | 'asset';
-  limit?: number;
-  useCache?: boolean;
+  query: string;
+  businessProfileId: string;
+  topK?: number;
+  resourceTypes?: string[];
+  threshold?: number; // Minimum similarity score (0-1)
 }
 
 export interface KnowledgeSearchResult {
-  resources: Array<BusinessResource & { similarity: number }>;
-  query: string;
-  searchTimeMs: number;
-  fromCache: boolean;
+  id: string;
+  title: string;
+  content: string;
+  resourceType: string;
+  similarity: number;
+  metadata: Record<string, any>;
 }
 
 export class KnowledgeService {
   /**
-   * Search business resources by semantic similarity
-   * This is guided by canon - agent knows what to search for based on canon instructions
+   * Search business resources using semantic similarity
    */
-  async search(
-    businessProfileId: string,
-    query: string,
-    options: KnowledgeSearchOptions = {}
-  ): Promise<KnowledgeSearchResult> {
-    const startTime = Date.now();
-    const { resourceType, limit = 5, useCache = true } = options;
+  static async search(options: KnowledgeSearchOptions): Promise<KnowledgeSearchResult[]> {
+    const { query, businessProfileId, topK = 5, resourceTypes, threshold = 0.7 } = options;
 
-    logger.info(`Searching knowledge base: "${query}"`);
+    try {
+      // Generate query embedding
+      const embedding = await this.generateEmbedding(query);
 
-    // Try cache first
-    if (useCache) {
-      const cached = await cacheService.getKnowledge<KnowledgeSearchResult>(
-        businessProfileId,
-        query
-      );
+      // Search across multiple resource tables
+      const results = await Promise.all([
+        this.searchBrandGuidelines(businessProfileId, embedding, topK, threshold),
+        this.searchOffers(businessProfileId, embedding, topK, threshold),
+        this.searchTestimonials(businessProfileId, embedding, topK, threshold),
+        this.searchCaseStudies(businessProfileId, embedding, topK, threshold),
+        this.searchHandbooks(businessProfileId, embedding, topK, threshold),
+      ]);
 
-      if (cached) {
-        logger.info('Knowledge search results from cache');
-        return {
-          ...cached,
-          fromCache: true,
-          searchTimeMs: Date.now() - startTime,
-        };
+      // Flatten and filter by resource types if specified
+      let allResults = results.flat();
+
+      if (resourceTypes && resourceTypes.length > 0) {
+        allResults = allResults.filter((r) => resourceTypes.includes(r.resourceType));
       }
+
+      // Sort by similarity and return top K
+      return allResults
+        .sort((a, b) => b.similarity - a.similarity)
+        .slice(0, topK);
+    } catch (error) {
+      logger.error('❌ Knowledge search error:', error);
+      return [];
     }
+  }
 
-    // Generate embedding for query
-    const embedding = await embeddingService.generateEmbedding(query);
+  /**
+   * Generate embedding for query (with caching)
+   */
+  private static async generateEmbedding(text: string): Promise<number[]> {
+    const cacheKey = `embedding:${text}`;
 
-    // Search by similarity
-    const resources = await knowledgeRepository.searchBySimilarity(
-      businessProfileId,
-      embedding,
-      {
-        resourceType,
-        limit,
+    return CacheService.getOrSet(
+      CacheLayer.Knowledge,
+      cacheKey,
+      async () => {
+        const response = await openai.embeddings.create({
+          model: 'text-embedding-3-large',
+          input: text,
+          encoding_format: 'float',
+        });
+
+        return response.data[0].embedding;
       }
     );
-
-    const searchTimeMs = Date.now() - startTime;
-
-    const result: KnowledgeSearchResult = {
-      resources,
-      query,
-      searchTimeMs,
-      fromCache: false,
-    };
-
-    // Cache the result
-    if (useCache) {
-      await cacheService.cacheKnowledge(businessProfileId, query, result);
-    }
-
-    logger.info(
-      `Knowledge search complete: ${resources.length} results in ${searchTimeMs}ms`
-    );
-
-    return result;
   }
 
   /**
-   * Get specific resource by ID
+   * Search brand guidelines
    */
-  async getResourceById(id: string): Promise<BusinessResource | null> {
-    return knowledgeRepository.getResourceById(id);
-  }
-
-  /**
-   * Get all resources for a business profile
-   */
-  async getAllResources(
+  private static async searchBrandGuidelines(
     businessProfileId: string,
-    resourceType?: string
-  ): Promise<BusinessResource[]> {
-    return knowledgeRepository.getResources(businessProfileId, resourceType);
-  }
-
-  /**
-   * Create new resource (with automatic embedding generation)
-   */
-  async createResource(
-    resource: Omit<BusinessResource, 'id' | 'created_at' | 'updated_at' | 'access_count' | 'is_indexed' | 'embedding'>
-  ): Promise<BusinessResource> {
-    // Generate embedding
-    const searchableText = embeddingService.resourceToSearchableText(resource);
-    const embedding = await embeddingService.generateEmbedding(searchableText);
-
-    // Create with embedding
-    const created = await knowledgeRepository.createResource({
-      ...resource,
-      is_active: true,
+    embedding: number[],
+    topK: number,
+    threshold: number
+  ): Promise<KnowledgeSearchResult[]> {
+    const { data, error } = await supabase.rpc('match_brand_guidelines', {
+      query_embedding: embedding,
+      match_threshold: threshold,
+      match_count: topK,
+      filter_business_profile_id: businessProfileId,
     });
 
-    // Mark as indexed
-    await knowledgeRepository.markAsIndexed(created.id, embedding);
+    if (error || !data) return [];
 
-    logger.info(`Created resource: ${created.id} (${created.title})`);
-
-    return created;
+    return data.map((row: any) => ({
+      id: row.id,
+      title: 'Brand Guidelines',
+      content: row.search_content || '',
+      resourceType: 'brand_guidelines',
+      similarity: row.similarity,
+      metadata: {
+        personality: row.personality,
+        tone: row.tone,
+        values: row.values,
+      },
+    }));
   }
 
   /**
-   * Update resource (regenerate embedding if content changed)
+   * Search offers
    */
-  async updateResource(
-    id: string,
-    updates: Partial<BusinessResource>
-  ): Promise<BusinessResource> {
-    const updated = await knowledgeRepository.updateResource(id, updates);
-
-    // If content changed, regenerate embedding
-    if (updates.content_text || updates.title || updates.description) {
-      const searchableText = embeddingService.resourceToSearchableText(updated);
-      const embedding = await embeddingService.generateEmbedding(searchableText);
-      await knowledgeRepository.markAsIndexed(id, embedding);
-    }
-
-    return updated;
-  }
-
-  /**
-   * Delete resource
-   */
-  async deleteResource(id: string): Promise<boolean> {
-    return knowledgeRepository.deleteResource(id);
-  }
-
-  /**
-   * Index unindexed resources (background job)
-   */
-  async indexUnindexedResources(
+  private static async searchOffers(
     businessProfileId: string,
-    batchSize: number = 10
-  ): Promise<number> {
-    const unindexed = await knowledgeRepository.getUnindexedResources(
-      businessProfileId,
-      batchSize
-    );
+    embedding: number[],
+    topK: number,
+    threshold: number
+  ): Promise<KnowledgeSearchResult[]> {
+    const { data, error } = await supabase.rpc('match_offers', {
+      query_embedding: embedding,
+      match_threshold: threshold,
+      match_count: topK,
+      filter_business_profile_id: businessProfileId,
+    });
 
-    if (unindexed.length === 0) {
-      logger.info('No unindexed resources found');
-      return 0;
-    }
+    if (error || !data) return [];
 
-    logger.info(`Indexing ${unindexed.length} resources...`);
-
-    for (const resource of unindexed) {
-      try {
-        const searchableText = embeddingService.resourceToSearchableText(resource);
-        const embedding = await embeddingService.generateEmbedding(searchableText);
-        await knowledgeRepository.markAsIndexed(resource.id, embedding);
-        logger.info(`Indexed resource: ${resource.id}`);
-      } catch (error) {
-        logger.error(`Error indexing resource ${resource.id}:`, error);
-      }
-    }
-
-    return unindexed.length;
+    return data.map((row: any) => ({
+      id: row.id,
+      title: row.name,
+      content: row.search_content || '',
+      resourceType: 'offer',
+      similarity: row.similarity,
+      metadata: {
+        price: row.price,
+        description: row.description,
+      },
+    }));
   }
 
   /**
-   * Format search results for agent consumption
+   * Search testimonials
    */
-  formatResultsForAgent(results: KnowledgeSearchResult): string {
-    if (results.resources.length === 0) {
-      return 'No relevant resources found in the knowledge base.';
+  private static async searchTestimonials(
+    businessProfileId: string,
+    embedding: number[],
+    topK: number,
+    threshold: number
+  ): Promise<KnowledgeSearchResult[]> {
+    const { data, error } = await supabase.rpc('match_testimonials', {
+      query_embedding: embedding,
+      match_threshold: threshold,
+      match_count: topK,
+      filter_business_profile_id: businessProfileId,
+    });
+
+    if (error || !data) return [];
+
+    return data.map((row: any) => ({
+      id: row.id,
+      title: `Testimonial from ${row.customer_name || 'Anonymous'}`,
+      content: row.quote,
+      resourceType: 'testimonial',
+      similarity: row.similarity,
+      metadata: {
+        customerName: row.customer_name,
+        rating: row.rating,
+      },
+    }));
+  }
+
+  /**
+   * Search case studies
+   */
+  private static async searchCaseStudies(
+    businessProfileId: string,
+    embedding: number[],
+    topK: number,
+    threshold: number
+  ): Promise<KnowledgeSearchResult[]> {
+    const { data, error } = await supabase.rpc('match_case_studies', {
+      query_embedding: embedding,
+      match_threshold: threshold,
+      match_count: topK,
+      filter_business_profile_id: businessProfileId,
+    });
+
+    if (error || !data) return [];
+
+    return data.map((row: any) => ({
+      id: row.id,
+      title: row.title,
+      content: row.search_content || '',
+      resourceType: 'case_study',
+      similarity: row.similarity,
+      metadata: {
+        clientName: row.client_name,
+        industry: row.industry,
+      },
+    }));
+  }
+
+  /**
+   * Search copywriting handbooks
+   */
+  private static async searchHandbooks(
+    businessProfileId: string,
+    embedding: number[],
+    topK: number,
+    threshold: number
+  ): Promise<KnowledgeSearchResult[]> {
+    const { data, error } = await supabase.rpc('match_handbooks', {
+      query_embedding: embedding,
+      match_threshold: threshold,
+      match_count: topK,
+      filter_business_profile_id: businessProfileId,
+    });
+
+    if (error || !data) return [];
+
+    return data.map((row: any) => ({
+      id: row.id,
+      title: row.custom_name || row.title || 'Copywriting Handbook',
+      content: row.search_content || '',
+      resourceType: 'handbook',
+      similarity: row.similarity,
+      metadata: {},
+    }));
+  }
+
+  /**
+   * Format knowledge results for AI consumption
+   */
+  static formatForAI(results: KnowledgeSearchResult[]): string {
+    if (results.length === 0) {
+      return 'No relevant knowledge found in business resources.';
     }
 
-    const formatted = results.resources.map((resource, idx) => {
-      let content = `${idx + 1}. **${resource.title}** (Relevance: ${(resource.similarity * 100).toFixed(1)}%)\n`;
-      
-      if (resource.description) {
-        content += `   ${resource.description}\n`;
-      }
+    const formatted = results.map((result, index) => {
+      return [
+        `### Result ${index + 1}: ${result.title} (${(result.similarity * 100).toFixed(1)}% match)`,
+        `**Type:** ${result.resourceType}`,
+        '',
+        result.content.substring(0, 500) + (result.content.length > 500 ? '...' : ''),
+      ].join('\n');
+    });
 
-      if (resource.content_text) {
-        // Truncate long content
-        const preview = resource.content_text.length > 300
-          ? resource.content_text.substring(0, 300) + '...'
-          : resource.content_text;
-        content += `   ${preview}\n`;
-      }
-
-      if (resource.tags && resource.tags.length > 0) {
-        content += `   Tags: ${resource.tags.join(', ')}\n`;
-      }
-
-      if (resource.file_url) {
-        content += `   File: ${resource.file_url}\n`;
-      }
-
-      return content;
-    }).join('\n');
-
-    return `Found ${results.resources.length} relevant resource(s):\n\n${formatted}`;
+    return formatted.join('\n\n---\n\n');
   }
 }
-
-// Singleton instance
-export const knowledgeService = new KnowledgeService();
 

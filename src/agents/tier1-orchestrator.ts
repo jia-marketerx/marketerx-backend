@@ -3,8 +3,8 @@ import { config } from '../config/env.js';
 import { AgentState, AgentConfig, ToolCallInfo, ToolResultInfo } from './types.js';
 import { SSEStream } from '../utils/sse.js';
 import { logger } from '../utils/logger.js';
-import { toolDefinitions, toolExecutor } from './tools.js';
 import Anthropic from '@anthropic-ai/sdk';
+import { allTools, executeTool, type ToolExecutionContext } from './tools.js';
 
 /**
  * Tier 1 Orchestrator Agent
@@ -54,31 +54,31 @@ export class Tier1Orchestrator {
 
       // Process streaming response
       let fullResponse = '';
-      const toolCalls: ToolCallInfo[] = [];
-      const contentBlocks: any[] = [];
+      const toolUseBlocks: any[] = [];
+      let currentToolUse: any = null;
       let inputTokens = 0;
       let outputTokens = 0;
-      let stopReason: string | null = null;
+      let stopReason = '';
 
       for await (const event of response) {
         if (event.type === 'message_start') {
           inputTokens = event.message.usage.input_tokens;
         } else if (event.type === 'content_block_start') {
-          contentBlocks[event.index] = { type: event.content_block.type };
-          
           if (event.content_block.type === 'text') {
-            contentBlocks[event.index].text = '';
+            // Text content starting
           } else if (event.content_block.type === 'tool_use') {
-            contentBlocks[event.index].id = event.content_block.id;
-            contentBlocks[event.index].name = event.content_block.name;
-            contentBlocks[event.index].input = {};
-            this.stream.thinking('tool_status', `Calling tool: ${event.content_block.name}`);
+            // Tool call starting
+            this.stream.thinking('tool_status', `Preparing to call: ${event.content_block.name}`);
+            currentToolUse = {
+              id: event.content_block.id,
+              name: event.content_block.name,
+              input: {},
+            };
           }
         } else if (event.type === 'content_block_delta') {
           if (event.delta.type === 'text_delta') {
             // Stream text chunks
             const chunk = event.delta.text;
-            contentBlocks[event.index].text += chunk;
             fullResponse += chunk;
             
             // Send streaming chunks to frontend
@@ -91,78 +91,42 @@ export class Tier1Orchestrator {
               },
             });
           } else if (event.delta.type === 'input_json_delta') {
-            // Tool input being built
-            contentBlocks[event.index].input = {
-              ...contentBlocks[event.index].input,
-              ...JSON.parse(event.delta.partial_json),
-            };
+            // Build tool input JSON
+            if (currentToolUse) {
+              try {
+                const partial = event.delta.partial_json || '';
+                currentToolUse.inputJson = (currentToolUse.inputJson || '') + partial;
+              } catch (e) {
+                // Ignore parsing errors during streaming
+              }
+            }
           }
         } else if (event.type === 'content_block_stop') {
           // Content block finished
+          if (currentToolUse) {
+            try {
+              currentToolUse.input = JSON.parse(currentToolUse.inputJson || '{}');
+              delete currentToolUse.inputJson;
+              toolUseBlocks.push(currentToolUse);
+            } catch (e) {
+              logger.error('Failed to parse tool input JSON:', e);
+            }
+            currentToolUse = null;
+          }
         } else if (event.type === 'message_delta') {
           outputTokens = event.usage.output_tokens;
-          stopReason = event.delta.stop_reason;
+          if (event.delta.stop_reason) {
+            stopReason = event.delta.stop_reason;
+          }
         } else if (event.type === 'message_stop') {
           // Message complete
         }
       }
 
-      // If there were tool calls, execute them and continue the conversation
-      if (stopReason === 'tool_use') {
-        this.stream.thinking('tool_status', 'Processing tool calls...');
-        
-        for (const block of contentBlocks) {
-          if (block.type === 'tool_use') {
-            const toolCall: ToolCallInfo = {
-              toolName: block.name,
-              input: block.input,
-              timestamp: Date.now(),
-            };
-            toolCalls.push(toolCall);
-
-            // Execute tool
-            const toolResult = await toolExecutor.execute(
-              block.name,
-              block.input,
-              {
-                businessProfileId: state.businessProfileId || '',
-                conversationId: state.conversationId,
-              }
-            );
-
-            const toolResultInfo: ToolResultInfo = {
-              toolName: block.name,
-              result: toolResult.data,
-              success: toolResult.success,
-              error: toolResult.error,
-              timestamp: Date.now(),
-            };
-            state.toolResults.push(toolResultInfo);
-
-            this.stream.thinking(
-              'tool_status',
-              `Tool ${block.name} completed ${toolResult.success ? 'successfully' : 'with errors'}`
-            );
-
-            // If tool provided formatted output, send it as analysis
-            if (toolResult.data?.formatted) {
-              const analysisType = block.name.includes('knowledge') ? 'knowledge_summary' :
-                                   block.name.includes('web') ? 'research_summary' : 'knowledge_summary';
-              
-              this.stream.send({
-                event: 'analysis',
-                data: {
-                  type: analysisType,
-                  content: toolResult.data.formatted,
-                },
-              });
-            }
-          }
-        }
-
-        // Continue conversation with tool results
-        // This would require another call to Claude with tool results, which we'll implement in a more sophisticated way later
-        // For now, we'll just add the tool results to state
+      // Execute tools if any were called
+      if (toolUseBlocks.length > 0) {
+        logger.info(`Executing ${toolUseBlocks.length} tool calls...`);
+        await this.processToolCalls(toolUseBlocks, state);
       }
 
       // Update state with response
@@ -172,13 +136,13 @@ export class Tier1Orchestrator {
         output: outputTokens,
       };
       state.modelUsed = this.config.model;
-      state.toolCalls = [...state.toolCalls, ...toolCalls];
 
       logger.info('Tier 1 orchestrator completed', {
         conversationId: state.conversationId,
         responseLength: fullResponse.length,
         tokensUsed: state.tokensUsed,
-        toolCallsCount: toolCalls.length,
+        toolCallsCount: toolUseBlocks.length,
+        stopReason,
       });
 
       return state;
@@ -195,43 +159,46 @@ export class Tier1Orchestrator {
   private buildSystemPrompt(): string {
     return `You are the Tier 1 Strategic Orchestrator for MarketerX, an AI-powered marketing content platform.
 
-Your role:
-- Understand user intent and marketing objectives
-- Provide strategic marketing advice and insights
-- Coordinate with tools to gather information (research, knowledge base)
-- When content creation is needed, provide clear briefs for Tier 2 content agents
-- Maintain conversation context and help users refine their marketing strategy
+**CANON-FIRST WORKFLOW (CRITICAL):**
 
-## Critical: Cache-First, Canon-Guided Architecture
+1. **Analyze Intent** - Understand what type of content the user needs (email, ad, landing page, etc.)
 
-When handling content creation requests, ALWAYS follow this workflow:
+2. **Fetch Canon EARLY** - Immediately call \`fetch_canon\` to load:
+   - Templates (structure/format guidance)
+   - Frameworks (strategic models like AIDA, PAS)
+   - Compliance rules (legal requirements, MUST be validated)
+   
+   Example: User wants email → fetch canon for category="all", contentType="email"
+   
+   WHY: Canon tells you WHAT to search for and HOW to generate content.
 
-1. **Analyze Intent** - Understand what the user wants to create
-2. **Fetch Canon EARLY** - Use fetch-canon tool immediately to load frameworks, templates, and compliance rules
-   - Canon tells you WHAT to search for in the knowledge base
-   - Canon guides your entire approach
-3. **Knowledge Search (Canon-Guided)** - Use knowledge-search with queries informed by canon
-   - Example: Canon says "look for copywriting handbook" → search for it
-4. **Web Search (Optional)** - Only if real-time data is needed
-5. **Synthesize & Create Brief** - Combine canon + knowledge + research
-6. **Execute Content** - Call content-execution tool with comprehensive brief
+3. **Canon-Guided Knowledge Search** - Use canon instructions to search user's business resources:
+   - If canon says "look for copywriting handbook" → search for it
+   - If canon mentions "brand guidelines required" → fetch them
+   - Use \`knowledge_search\` with queries informed by canon
+   
+4. **Optional Web Search** - Only if:
+   - User explicitly requests current trends/data
+   - Canon or knowledge suggests external research needed
+   - Use \`web_search\` for real-time information
 
-## Available Tools
+5. **Synthesize & Respond** - Combine canon + knowledge + web research to:
+   - Answer strategic questions
+   - Provide marketing advice
+   - Build briefs for content generation (Phase 6)
 
-You have access to these tools:
-- **fetch-canon**: Load proprietary frameworks, templates, compliance rules (USE THIS FIRST!)
-- **knowledge-search**: Semantic search over user's business resources (guided by canon)
-- **knowledge-fetch**: Get full content of specific resource by ID
-- **web-search**: Real-time web search (optional, only when needed)
-- **content-execution**: Generate content via Tier 2 agent (provide comprehensive brief)
+**Available Tools:**
+- \`fetch_canon\`: Load proprietary frameworks/templates/compliance (CALL FIRST!)
+- \`knowledge_search\`: Search user's business resources (brand, offers, testimonials, etc.)
+- \`web_search\`: Real-time web search for trends and research
 
-Communication style:
+**Communication Style:**
 - Professional yet conversational
-- Strategic and data-driven
-- Transparent about your reasoning process
-- Stream your thinking so users see your workflow
+- Strategic and data-driven  
+- Transparent about reasoning
+- Cite sources when using canon/knowledge/web results
 
-Remember: Canon is your guide. Load it early, use it to direct your searches.`;
+**Phase 5 Active:** Full tool integration with Canon-First architecture`;
   }
 
   /**
@@ -263,7 +230,90 @@ Remember: Canon is your guide. Load it early, use it to direct your searches.`;
    * Get tool definitions
    */
   private getToolDefinitions(): any[] {
-    return toolDefinitions;
+    return allTools;
+  }
+
+  /**
+   * Process tool calls from Claude response
+   * This is a simplified version for Phase 5 - full agentic loop will be added later
+   */
+  private async processToolCalls(
+    toolUseBlocks: any[],
+    state: AgentState
+  ): Promise<void> {
+    const context: ToolExecutionContext = {
+      businessProfileId: state.businessProfileId,
+      userId: state.userId,
+    };
+
+    for (const toolUse of toolUseBlocks) {
+      const { id, name, input } = toolUse;
+
+      this.stream.thinking('tool_status', `Executing ${name}...`);
+
+      try {
+        const result = await executeTool(name, input, context);
+
+        // Track tool call and result in state
+        state.toolCalls.push({
+          id,
+          name,
+          input,
+          timestamp: new Date(),
+        });
+
+        state.toolResults.push({
+          toolCallId: id,
+          output: result.content,
+          isError: !result.success,
+          timestamp: new Date(),
+        });
+
+        if (result.success) {
+          this.stream.thinking('tool_status', `✅ ${name} completed`);
+          
+          // Send results as analysis events (so frontend can display them)
+          if (name === 'fetch_canon') {
+            this.stream.send({
+              event: 'analysis',
+              data: {
+                type: 'canon_loaded',
+                content: `Canon loaded: ${result.metadata?.count || 0} rules`,
+              },
+            });
+          } else if (name === 'knowledge_search') {
+            this.stream.send({
+              event: 'analysis',
+              data: {
+                type: 'knowledge_summary',
+                content: `Found ${result.metadata?.resultCount || 0} relevant resources`,
+              },
+            });
+          } else if (name === 'web_search') {
+            this.stream.send({
+              event: 'analysis',
+              data: {
+                type: 'research_summary',
+                content: result.metadata?.summary || 'Web search completed',
+              },
+            });
+          }
+        } else {
+          this.stream.thinking('tool_status', `❌ ${name} failed: ${result.error}`);
+        }
+      } catch (error: any) {
+        logger.error(`Error executing tool ${name}:`, error);
+
+        state.toolResults.push({
+          toolCallId: id,
+          output: `Error: ${error.message}`,
+          isError: true,
+          timestamp: new Date(),
+        });
+
+        this.stream.thinking('tool_status', `❌ ${name} error: ${error.message}`);
+      }
+    }
   }
 }
 

@@ -3,7 +3,6 @@ import { testDatabaseConnection } from '../lib/supabase.js';
 import { testRedisConnection } from '../lib/redis.js';
 import { testAnthropicConnection } from '../lib/anthropic.js';
 import { testOpenAIConnection } from '../lib/openai.js';
-import { testTavilyConnection } from '../lib/tavily.js';
 
 /**
  * Health check routes
@@ -24,9 +23,8 @@ export async function healthRoutes(fastify: FastifyInstance) {
     const redisHealthy = await testRedisConnection();
     const anthropicHealthy = await testAnthropicConnection();
     const openaiHealthy = await testOpenAIConnection();
-    const tavilyHealthy = await testTavilyConnection();
 
-    const isHealthy = dbHealthy && redisHealthy && anthropicHealthy && openaiHealthy && tavilyHealthy;
+    const isHealthy = dbHealthy && redisHealthy && anthropicHealthy && openaiHealthy;
 
     return reply.code(isHealthy ? 200 : 503).send({
       status: isHealthy ? 'ok' : 'degraded',
@@ -37,7 +35,6 @@ export async function healthRoutes(fastify: FastifyInstance) {
         redis: redisHealthy ? 'ok' : 'error',
         anthropic: anthropicHealthy ? 'ok' : 'error',
         openai: openaiHealthy ? 'ok' : 'error',
-        tavily: tavilyHealthy ? 'ok' : 'error',
       },
     });
   });

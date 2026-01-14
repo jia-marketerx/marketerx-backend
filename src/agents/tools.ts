@@ -1,389 +1,248 @@
 /**
- * Tool Definitions and Execution Framework
- * Defines all tools available to Tier 1 orchestrator
+ * Tool Definitions and Handlers for Tier 1 Orchestrator
+ * 
+ * Implements: canon-fetch, knowledge-search, web-search
  */
 
-import { canonService } from '../services/canon.service.js';
-import { knowledgeService } from '../services/knowledge.service.js';
-import { webSearchService } from '../services/websearch.service.js';
+import type { Tool as AnthropicTool } from '@anthropic-ai/sdk/resources/messages.mjs';
+import { CanonService } from '../services/canon.service.js';
+import { KnowledgeService } from '../services/knowledge.service.js';
+import { WebSearchService } from '../services/web-search.service.js';
+import { CanonCategory, CanonContentType } from '../types/canon.js';
 import { logger } from '../utils/logger.js';
 
 /**
- * Tool definition for Anthropic's tool use
+ * Tool definition: fetch-canon
+ * Load proprietary frameworks, templates, and compliance rules
  */
-export interface ToolDefinition {
-  name: string;
-  description: string;
+export const fetchCanonTool: AnthropicTool = {
+  name: 'fetch_canon',
+  description:
+    'Load proprietary frameworks, templates, and compliance rules for content generation. ' +
+    'This should be called EARLY after understanding user intent to guide all subsequent tool usage.',
   input_schema: {
-    type: 'object';
-    properties: Record<string, any>;
-    required: string[];
-  };
-}
+    type: 'object',
+    properties: {
+      category: {
+        type: 'string',
+        enum: ['template', 'framework', 'compliance', 'all'],
+        description: 'Category of canon to fetch',
+      },
+      contentType: {
+        type: 'string',
+        enum: ['email', 'ad', 'landing-page', 'script', 'general'],
+        description: 'Content type to fetch canon for',
+      },
+    },
+    required: ['category', 'contentType'],
+  },
+};
 
 /**
- * Tool execution result
+ * Tool definition: knowledge-search
+ * Search user's business resources using semantic similarity
  */
-export interface ToolResult {
-  toolName: string;
+export const knowledgeSearchTool: AnthropicTool = {
+  name: 'knowledge_search',
+  description:
+    'Search user business resources (brand guidelines, offers, testimonials, case studies, copywriting handbooks) ' +
+    'using semantic similarity. Use this AFTER loading canon to find specific brand/product information.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      query: {
+        type: 'string',
+        description: 'Search query for finding relevant business resources',
+      },
+      topK: {
+        type: 'number',
+        description: 'Number of results to return (default: 5)',
+        default: 5,
+      },
+      resourceTypes: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Filter by resource types: brand_guidelines, offer, testimonial, case_study, handbook',
+      },
+    },
+    required: ['query'],
+  },
+};
+
+/**
+ * Tool definition: web-search
+ * Search the web for real-time information
+ */
+export const webSearchTool: AnthropicTool = {
+  name: 'web_search',
+  description:
+    'Search the web for real-time information, trends, competitor research, or industry insights. ' +
+    'Use this when user asks for current data OR canon/knowledge suggest external research.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      query: {
+        type: 'string',
+        description: 'Web search query',
+      },
+      searchDepth: {
+        type: 'string',
+        enum: ['basic', 'advanced'],
+        description: 'basic = 5 sources (fast), advanced = 20 sources (comprehensive)',
+        default: 'basic',
+      },
+      maxResults: {
+        type: 'number',
+        description: 'Maximum number of results to return (default: 10)',
+        default: 10,
+      },
+    },
+    required: ['query'],
+  },
+};
+
+/**
+ * All tools available to Tier 1 agent
+ */
+export const allTools: AnthropicTool[] = [fetchCanonTool, knowledgeSearchTool, webSearchTool];
+
+/**
+ * Tool execution handlers
+ */
+export interface ToolExecutionContext {
+  businessProfileId: string;
+  userId: string;
+}
+
+export interface ToolExecutionResult {
   success: boolean;
-  data?: any;
+  content: string;
+  metadata?: Record<string, any>;
   error?: string;
-  executionTimeMs: number;
 }
 
-/**
- * All tool definitions for Tier 1 agent
- */
-export const toolDefinitions: ToolDefinition[] = [
-  {
-    name: 'fetch-canon',
-    description: 'Load proprietary frameworks, templates, and compliance rules. Call this EARLY after understanding user intent to guide subsequent searches.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        category: {
-          type: 'string',
-          enum: ['template', 'framework', 'compliance', 'style', 'all'],
-          description: 'Category of canon to load'
-        },
-        contentType: {
-          type: 'string',
-          enum: ['email', 'ad', 'landing-page', 'script'],
-          description: 'Type of content being created'
-        }
-      },
-      required: ['category', 'contentType']
-    }
-  },
-  
-  {
-    name: 'knowledge-search',
-    description: 'Search user\'s business resources using semantic search. Use canon guidance to know what to search for.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        query: {
-          type: 'string',
-          description: 'Semantic search query based on user need and canon guidance'
-        },
-        topK: {
-          type: 'number',
-          description: 'Number of results to return',
-          default: 5
-        },
-        resourceType: {
-          type: 'string',
-          enum: ['document', 'guideline', 'reference', 'example', 'asset'],
-          description: 'Optional: filter by resource type'
-        }
-      },
-      required: ['query']
-    }
-  },
-  
-  {
-    name: 'knowledge-fetch',
-    description: 'Retrieve full content of a specific resource by ID',
-    input_schema: {
-      type: 'object',
-      properties: {
-        resourceId: {
-          type: 'string',
-          description: 'UUID of the resource to fetch'
-        }
-      },
-      required: ['resourceId']
-    }
-  },
-  
-  {
-    name: 'web-search',
-    description: 'Search the web for real-time information. Only use when current data is needed and knowledge base is insufficient.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        query: {
-          type: 'string',
-          description: 'Search query'
-        },
-        maxResults: {
-          type: 'number',
-          description: 'Maximum number of results',
-          default: 10
-        },
-        searchDepth: {
-          type: 'string',
-          enum: ['basic', 'advanced'],
-          description: 'basic=5 sources, advanced=20 sources',
-          default: 'basic'
-        }
-      },
-      required: ['query']
-    }
-  },
-  
-  {
-    name: 'content-execution',
-    description: 'Generate content using specialized writing agent (Tier 2). Provide a comprehensive brief with all context.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        contentType: {
-          type: 'string',
-          enum: ['email', 'ad', 'landing-page', 'script'],
-          description: 'Type of content to generate'
-        },
-        objective: {
-          type: 'string',
-          description: 'Clear objective for the content'
-        },
-        targetAudience: {
-          type: 'string',
-          description: 'Target audience description'
-        },
-        brandGuidelines: {
-          type: 'string',
-          description: 'Brand voice and style guidelines from canon'
-        },
-        templates: {
-          type: 'array',
-          items: { type: 'object' },
-          description: 'Template structures from canon'
-        },
-        complianceRules: {
-          type: 'array',
-          items: { type: 'object' },
-          description: 'Compliance requirements from canon'
-        },
-        research: {
-          type: 'string',
-          description: 'Summary of knowledge and web research findings'
-        },
-        tone: {
-          type: 'string',
-          description: 'Desired tone (e.g., professional, friendly, urgent)'
-        }
-      },
-      required: ['contentType', 'objective', 'targetAudience']
-    }
-  }
-];
+export async function executeFetchCanon(
+  input: { category: string; contentType: string },
+  _context: ToolExecutionContext
+): Promise<ToolExecutionResult> {
+  try {
+    logger.info(`🔧 Executing fetch_canon: ${input.category} / ${input.contentType}`);
 
-/**
- * Tool Executor
- * Executes tools and returns results
- */
-export class ToolExecutor {
-  /**
-   * Execute a tool call
-   */
-  async execute(
-    toolName: string,
-    input: any,
-    context: {
-      businessProfileId: string;
-      conversationId?: string;
-    }
-  ): Promise<ToolResult> {
-    const startTime = Date.now();
-    
-    try {
-      logger.info(`Executing tool: ${toolName}`, { input });
-
-      let data: any;
-
-      switch (toolName) {
-        case 'fetch-canon':
-          data = await this.executeFetchCanon(input, context);
-          break;
-
-        case 'knowledge-search':
-          data = await this.executeKnowledgeSearch(input, context);
-          break;
-
-        case 'knowledge-fetch':
-          data = await this.executeKnowledgeFetch(input, context);
-          break;
-
-        case 'web-search':
-          data = await this.executeWebSearch(input, context);
-          break;
-
-        case 'content-execution':
-          data = await this.executeContentExecution(input, context);
-          break;
-
-        default:
-          throw new Error(`Unknown tool: ${toolName}`);
-      }
-
-      const executionTimeMs = Date.now() - startTime;
-
-      logger.info(`Tool ${toolName} completed in ${executionTimeMs}ms`);
-
-      return {
-        toolName,
-        success: true,
-        data,
-        executionTimeMs,
-      };
-    } catch (error: any) {
-      const executionTimeMs = Date.now() - startTime;
-      logger.error(`Tool ${toolName} failed:`, error);
-
-      return {
-        toolName,
-        success: false,
-        error: error.message || 'Unknown error',
-        executionTimeMs,
-      };
-    }
-  }
-
-  /**
-   * Execute fetch-canon tool
-   */
-  private async executeFetchCanon(
-    input: { category: string; contentType: string },
-    context: { businessProfileId: string; conversationId?: string }
-  ): Promise<any> {
-    const result = await canonService.fetchCanon(context.businessProfileId, {
-      category: input.category as any,
-      contentType: input.contentType as any,
-      useCache: true,
+    const canons = await CanonService.fetchCanons({
+      category: input.category === 'all' ? undefined : (input.category as CanonCategory),
+      contentType: input.contentType as CanonContentType,
     });
 
-    // Log usage for each canon item
-    for (const item of result.items) {
-      await canonService.logUsage(
-        item.id,
-        context.businessProfileId,
-        context.conversationId || null,
-        {
-          contentType: input.contentType,
-          wasCached: result.fromCache,
-          loadTimeMs: result.loadTimeMs,
-        }
-      );
-    }
-
-    // Format for agent consumption
-    return {
-      summary: result.summary,
-      items: result.items.map((item) => ({
-        id: item.id,
-        title: item.title,
-        slug: item.slug,
-        description: item.description,
-        content: item.content,
-        tags: item.tags,
-      })),
-      formatted: canonService.formatForAgent(result.items),
-      loadTimeMs: result.loadTimeMs,
-      fromCache: result.fromCache,
-    };
-  }
-
-  /**
-   * Execute knowledge-search tool
-   */
-  private async executeKnowledgeSearch(
-    input: { query: string; topK?: number; resourceType?: string },
-    context: { businessProfileId: string }
-  ): Promise<any> {
-    const result = await knowledgeService.search(
-      context.businessProfileId,
-      input.query,
-      {
-        limit: input.topK || 5,
-        resourceType: input.resourceType as any,
-        useCache: true,
-      }
-    );
+    const formatted = CanonService.formatForAI(canons);
 
     return {
-      query: result.query,
-      results: result.resources.map((resource) => ({
-        id: resource.id,
-        title: resource.title,
-        description: resource.description,
-        contentPreview: resource.content_text?.substring(0, 500),
-        fileUrl: resource.file_url,
-        tags: resource.tags,
-        similarity: resource.similarity,
-      })),
-      formatted: knowledgeService.formatResultsForAgent(result),
-      searchTimeMs: result.searchTimeMs,
-      fromCache: result.fromCache,
+      success: true,
+      content: formatted,
+      metadata: {
+        count: canons.length,
+        category: input.category,
+        contentType: input.contentType,
+      },
+    };
+  } catch (error: any) {
+    logger.error('❌ Error executing fetch_canon:', error);
+    return {
+      success: false,
+      content: 'Failed to fetch canon data',
+      error: error.message,
     };
   }
+}
 
-  /**
-   * Execute knowledge-fetch tool
-   */
-  private async executeKnowledgeFetch(
-    input: { resourceId: string },
-    context: { businessProfileId: string }
-  ): Promise<any> {
-    const resource = await knowledgeService.getResourceById(input.resourceId);
+export async function executeKnowledgeSearch(
+  input: { query: string; topK?: number; resourceTypes?: string[] },
+  context: ToolExecutionContext
+): Promise<ToolExecutionResult> {
+  try {
+    logger.info(`🔧 Executing knowledge_search: ${input.query}`);
 
-    if (!resource) {
-      throw new Error(`Resource not found: ${input.resourceId}`);
-    }
+    const results = await KnowledgeService.search({
+      query: input.query,
+      businessProfileId: context.businessProfileId,
+      topK: input.topK || 5,
+      resourceTypes: input.resourceTypes,
+    });
+
+    const formatted = KnowledgeService.formatForAI(results);
 
     return {
-      id: resource.id,
-      title: resource.title,
-      description: resource.description,
-      content: resource.content_text,
-      fileUrl: resource.file_url,
-      tags: resource.tags,
-      resourceType: resource.resource_type,
+      success: true,
+      content: formatted,
+      metadata: {
+        resultCount: results.length,
+        query: input.query,
+      },
+    };
+  } catch (error: any) {
+    logger.error('❌ Error executing knowledge_search:', error);
+    return {
+      success: false,
+      content: 'Failed to search knowledge base',
+      error: error.message,
     };
   }
+}
 
-  /**
-   * Execute web-search tool
-   */
-  private async executeWebSearch(
-    input: { query: string; maxResults?: number; searchDepth?: string },
-    context: { businessProfileId: string }
-  ): Promise<any> {
-    const result = await webSearchService.search(input.query, {
+export async function executeWebSearch(
+  input: { query: string; searchDepth?: 'basic' | 'advanced'; maxResults?: number },
+  _context: ToolExecutionContext
+): Promise<ToolExecutionResult> {
+  try {
+    logger.info(`🔧 Executing web_search: ${input.query} (${input.searchDepth || 'basic'})`);
+
+    const response = await WebSearchService.search({
+      query: input.query,
+      searchDepth: input.searchDepth || 'basic',
       maxResults: input.maxResults || 10,
-      searchDepth: (input.searchDepth as 'basic' | 'advanced') || 'basic',
-      useCache: true,
     });
 
-    return {
-      query: result.query,
-      results: result.results,
-      formatted: webSearchService.formatResultsForAgent(result),
-      sources: result.sources,
-      searchTimeMs: result.searchTimeMs,
-      fromCache: result.fromCache,
-    };
-  }
+    const formatted = WebSearchService.formatForAI(response);
 
-  /**
-   * Execute content-execution tool (Tier 2)
-   */
-  private async executeContentExecution(
-    input: any,
-    context: { businessProfileId: string; conversationId?: string }
-  ): Promise<any> {
-    // TODO: Implement Tier 2 content execution in Phase 6
-    // For now, return a placeholder
     return {
-      contentType: input.contentType,
-      status: 'pending',
-      message: 'Tier 2 content execution will be implemented in Phase 6',
-      brief: input,
+      success: true,
+      content: formatted,
+      metadata: {
+        resultCount: response.results.length,
+        summary: response.summary,
+        query: input.query,
+      },
+    };
+  } catch (error: any) {
+    logger.error('❌ Error executing web_search:', error);
+    return {
+      success: false,
+      content: 'Failed to perform web search',
+      error: error.message,
     };
   }
 }
 
-// Singleton instance
-export const toolExecutor = new ToolExecutor();
+/**
+ * Execute tool by name
+ */
+export async function executeTool(
+  toolName: string,
+  toolInput: any,
+  context: ToolExecutionContext
+): Promise<ToolExecutionResult> {
+  switch (toolName) {
+    case 'fetch_canon':
+      return executeFetchCanon(toolInput, context);
+    case 'knowledge_search':
+      return executeKnowledgeSearch(toolInput, context);
+    case 'web_search':
+      return executeWebSearch(toolInput, context);
+    default:
+      return {
+        success: false,
+        content: `Unknown tool: ${toolName}`,
+        error: 'Tool not found',
+      };
+  }
+}
 
