@@ -180,10 +180,13 @@ export class Tier1Orchestrator {
           await this.processToolCalls(toolUseBlocks, state);
 
           // Add assistant message with tool calls to conversation
-          state.conversationContext.push({
-            role: 'assistant',
-            content: contentBlocks,
-          } as any);
+          // Ensure we have content blocks
+          if (contentBlocks.length > 0) {
+            state.conversationContext.push({
+              role: 'assistant',
+              content: contentBlocks,
+            } as any);
+          }
 
           // Add tool results as user message for next iteration
           const toolResultsMessage: any = {
@@ -191,7 +194,7 @@ export class Tier1Orchestrator {
             content: state.toolResults.slice(-toolUseBlocks.length).map((result) => ({
               type: 'tool_result',
               tool_use_id: result.toolCallId,
-              content: result.output,
+              content: result.output || 'No output',
               is_error: result.isError,
             })),
           };
