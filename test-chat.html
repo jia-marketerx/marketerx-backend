@@ -296,8 +296,9 @@
                 addMessage('thinking', `💭 ${data.content}`, 'thinking');
               }
               
-              // 2. Analysis events (research_summary, knowledge_summary, canon_loaded)
-              else if (data.type === 'research_summary' || data.type === 'knowledge_summary' || data.type === 'canon_loaded') {
+              // 2. Analysis events (research_summary, knowledge_summary, canon_loaded, content_generated, validation_complete)
+              else if (data.type === 'research_summary' || data.type === 'knowledge_summary' || data.type === 'canon_loaded' || 
+                       data.type === 'content_generated' || data.type === 'validation_complete' || data.type === 'content_generation_start') {
                 // Finish any ongoing streaming before showing analysis
                 if (isStreaming) {
                   finishStreamingMessage();
@@ -306,23 +307,45 @@
                 let icon = '📊';
                 if (data.type === 'research_summary') icon = '🔍';
                 if (data.type === 'canon_loaded') icon = '📚';
+                if (data.type === 'content_generated') icon = '✨';
+                if (data.type === 'validation_complete') icon = '✅';
+                if (data.type === 'content_generation_start') icon = '🎨';
                 addMessage('analysis', `${icon} ${data.content}`, 'analysis');
               }
               
-              // 3. Artifact events (code, documents, etc.)
-              else if (data.type === 'start' && data.artifactId) {
-                // Finish any ongoing streaming before showing artifact
-                if (isStreaming) {
-                  finishStreamingMessage();
-                  isStreaming = false;
+              // 3. Artifact events (streaming content generation)
+              else if (data.type === 'start' || data.type === 'delta' || data.type === 'end') {
+                // These are artifact streaming events (without artifactId initially)
+                if (data.type === 'start') {
+                  // Artifact generation starting
+                  if (isStreaming) {
+                    finishStreamingMessage();
+                    isStreaming = false;
+                  }
+                  addMessage('artifact', '🎨 Generating content...', 'artifact');
+                  // Start tracking artifact content
+                  if (!window.currentArtifact) {
+                    window.currentArtifact = { content: '', div: null };
+                  }
+                  window.currentArtifact.content = '';
+                  window.currentArtifact.div = addMessage('artifact', '', 'artifact-content');
                 }
-                addMessage('artifact', `📄 Artifact: ${data.artifactId}`, 'artifact');
-              }
-              else if (data.type === 'delta' && data.artifactId) {
-                // Could update artifact content here
-              }
-              else if (data.type === 'end' && data.artifactId) {
-                addMessage('artifact', `✅ Artifact complete: ${data.artifactId}`, 'artifact');
+                else if (data.type === 'delta' && data.content) {
+                  // Stream artifact chunks
+                  if (window.currentArtifact) {
+                    window.currentArtifact.content += data.content;
+                    if (window.currentArtifact.div) {
+                      window.currentArtifact.div.textContent = window.currentArtifact.content;
+                      const messagesDiv = document.getElementById('messages');
+                      messagesDiv.scrollTop = messagesDiv.scrollHeight;
+                    }
+                  }
+                }
+                else if (data.type === 'end') {
+                  // Artifact complete
+                  addMessage('artifact', '✅ Content generated successfully!', 'artifact');
+                  window.currentArtifact = null;
+                }
               }
               
               // 4. Message events (assistant responses)
