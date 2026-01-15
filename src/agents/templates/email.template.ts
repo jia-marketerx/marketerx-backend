@@ -11,7 +11,7 @@ export interface EmailBrief {
   keyMessage: string;
   cta: string;
   tone: string;
-  frameworks: any;
+  frameworks?: any;
   brandGuidelines?: any;
   additionalContext?: string;
 }

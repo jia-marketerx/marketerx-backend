@@ -9,12 +9,12 @@ export interface LandingPageBrief {
   purpose: string;
   productService: string;
   targetAudience: string;
-  uniqueValue: string;
-  keyBenefits: string[];
+  uniqueValue?: string;
+  keyBenefits?: string[];
   socialProof?: string;
   cta: string;
   tone: string;
-  frameworks: any;
+  frameworks?: any;
   brandGuidelines?: any;
   additionalContext?: string;
 }
@@ -164,16 +164,18 @@ export function buildLandingPageUserPrompt(brief: LandingPageBrief): string {
 
 **Target Audience:** ${brief.targetAudience}
 
-**Unique Value Proposition:** ${brief.uniqueValue}
+**Unique Value Proposition:** ${brief.uniqueValue || 'Identify the unique value'}
 
 **Key Benefits:**
-${brief.keyBenefits.map((b, i) => `${i + 1}. ${b}`).join('\n')}
+${brief.keyBenefits && Array.isArray(brief.keyBenefits) && brief.keyBenefits.length > 0 
+  ? brief.keyBenefits.map((b, i) => `${i + 1}. ${b}`).join('\n') 
+  : 'Identify 3-5 key benefits based on the purpose and target audience'}
 
 ${brief.socialProof ? `**Social Proof Available:**\n${brief.socialProof}\n` : ''}
 
 **Primary Call-to-Action:** ${brief.cta}
 
-**Tone:** ${brief.tone}
+**Tone:** ${brief.tone || 'professional and engaging'}
 
 ${brief.frameworks ? `**Framework to Follow:**\n${JSON.stringify(brief.frameworks, null, 2)}\n` : ''}
 

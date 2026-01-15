@@ -6,15 +6,15 @@
  */
 
 export interface AdBrief {
-  platform: string; // Facebook, Google, LinkedIn, Instagram, etc.
-  adType: string; // single image, carousel, video, text
-  objective: string; // awareness, consideration, conversion
+  platform?: string; // Facebook, Google, LinkedIn, Instagram, etc.
+  adType?: string; // single image, carousel, video, text
+  objective?: string; // awareness, consideration, conversion
   targetAudience: string;
   productService: string;
-  uniqueValue: string;
+  uniqueValue?: string;
   cta: string;
   tone: string;
-  frameworks: any;
+  frameworks?: any;
   brandGuidelines?: any;
   additionalContext?: string;
 }
@@ -116,21 +116,21 @@ Create persuasive, platform-optimized ad copy based on the brief.`;
 export function buildAdUserPrompt(brief: AdBrief): string {
   return `Generate ad copy with the following specifications:
 
-**Platform:** ${brief.platform}
+**Platform:** ${brief.platform || 'Social media (Facebook/Instagram)'}
 
-**Ad Type:** ${brief.adType}
+**Ad Type:** ${brief.adType || 'Single image ad'}
 
-**Campaign Objective:** ${brief.objective}
+**Campaign Objective:** ${brief.objective || 'Conversion'}
 
 **Target Audience:** ${brief.targetAudience}
 
 **Product/Service:** ${brief.productService}
 
-**Unique Value Proposition:** ${brief.uniqueValue}
+**Unique Value Proposition:** ${brief.uniqueValue || 'Identify unique selling point'}
 
 **Call-to-Action:** ${brief.cta}
 
-**Tone:** ${brief.tone}
+**Tone:** ${brief.tone || 'engaging and persuasive'}
 
 ${brief.frameworks ? `**Framework to Follow:**\n${JSON.stringify(brief.frameworks, null, 2)}\n` : ''}
 
@@ -138,6 +138,6 @@ ${brief.brandGuidelines ? `**Brand Guidelines:**\n${JSON.stringify(brief.brandGu
 
 ${brief.additionalContext ? `**Additional Context:**\n${brief.additionalContext}\n` : ''}
 
-Create compelling ad copy optimized for ${brief.platform} following the system instructions above.`;
+Create compelling ad copy optimized for ${brief.platform || 'the platform'} following the system instructions above.`;
 }
 

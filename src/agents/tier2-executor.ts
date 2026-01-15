@@ -1,4 +1,3 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { anthropic } from '../lib/anthropic';
 import { config } from '../config/env';
 import { SSEStream } from '../utils/sse';
@@ -60,9 +59,12 @@ export class Tier2Executor {
   async execute(input: ContentExecutionInput): Promise<ContentExecutionOutput> {
     const startTime = Date.now();
 
-    this.stream.analysis('content_generation_start', {
-      contentType: input.contentType,
-      message: `Generating ${input.contentType} content...`,
+    this.stream.send({
+      event: 'analysis',
+      data: {
+        type: 'content_generation_start',
+        content: `Generating ${input.contentType} content...`,
+      },
     });
 
     try {
@@ -74,9 +76,12 @@ export class Tier2Executor {
 
       const generationTimeMs = Date.now() - startTime;
 
-      this.stream.analysis('content_generation_complete', {
-        contentType: input.contentType,
-        message: `✅ ${input.contentType} generated in ${generationTimeMs}ms`,
+      this.stream.send({
+        event: 'analysis',
+        data: {
+          type: 'content_generated',
+          content: `✅ ${input.contentType} generated in ${generationTimeMs}ms`,
+        },
       });
 
       return {
@@ -172,7 +177,7 @@ export class Tier2Executor {
 
     // Stream content generation
     const stream = await anthropic.messages.stream({
-      model: config.tier2Model,
+      model: config.models.tier2,
       max_tokens: 4096,
       temperature: 0.7,
       system: systemPrompt,
@@ -218,7 +223,7 @@ export class Tier2Executor {
 
     return {
       content: fullContent,
-      model: config.tier2Model,
+      model: config.models.tier2,
       tokensUsed: inputTokens + outputTokens,
     };
   }

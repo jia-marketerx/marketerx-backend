@@ -6,14 +6,14 @@
  */
 
 export interface ScriptBrief {
-  format: string; // youtube, tiktok, reel, vsl, podcast, webinar
-  duration: string; // 30s, 1min, 5min, 10min+
+  format?: string; // youtube, tiktok, reel, vsl, podcast, webinar
+  duration?: string; // 30s, 1min, 5min, 10min+
   purpose: string;
   targetAudience: string;
   keyMessage: string;
   cta: string;
   tone: string;
-  frameworks: any;
+  frameworks?: any;
   brandGuidelines?: any;
   additionalContext?: string;
 }
@@ -159,9 +159,9 @@ Create an engaging, production-ready script based on the brief.`;
 export function buildScriptUserPrompt(brief: ScriptBrief): string {
   return `Generate a script with the following specifications:
 
-**Format:** ${brief.format}
+**Format:** ${brief.format || 'YouTube video'}
 
-**Duration:** ${brief.duration}
+**Duration:** ${brief.duration || '5 minutes'}
 
 **Purpose:** ${brief.purpose}
 
@@ -171,7 +171,7 @@ export function buildScriptUserPrompt(brief: ScriptBrief): string {
 
 **Call-to-Action:** ${brief.cta}
 
-**Tone:** ${brief.tone}
+**Tone:** ${brief.tone || 'engaging and conversational'}
 
 ${brief.frameworks ? `**Framework to Follow:**\n${JSON.stringify(brief.frameworks, null, 2)}\n` : ''}
 

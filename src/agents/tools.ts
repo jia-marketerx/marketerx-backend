@@ -112,7 +112,8 @@ export const contentExecutionTool: AnthropicTool = {
   name: 'content_execution',
   description:
     'Generate marketing content (email, ad, landing page, script) using specialized AI. ' +
-    'Call this AFTER loading canon, searching knowledge, and building a comprehensive brief. ' +
+    'Call this after attempting to gather context (canon, knowledge). ' +
+    'Even if canon/knowledge return no results, still call this tool - the AI will generate quality content based on best practices. ' +
     'This tool streams the generated content to the frontend in real-time.',
   input_schema: {
     type: 'object',
