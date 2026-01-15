@@ -271,6 +271,16 @@ export class Tier1Orchestrator {
 - \`fetch_canon\`: Load proprietary frameworks/templates/compliance (CALL FIRST!)
 - \`knowledge_search\`: Search user's business resources (brand, offers, testimonials, etc.)
 - \`web_search\`: Real-time web search for trends and research
+- \`content_execution\`: Generate marketing content (email, ad, landing-page, script) - CALL AFTER gathering context
+- \`validate_content\`: Validate content against canon rules and compliance
+
+**Workflow for Content Generation:**
+1. Load canon for content type
+2. Search knowledge for brand/product info
+3. (Optional) Web search if needed
+4. Call content_execution with comprehensive brief
+5. Call validate_content to check compliance
+6. Present final content to user
 
 **Communication Style:**
 - Professional yet conversational
@@ -278,7 +288,7 @@ export class Tier1Orchestrator {
 - Transparent about reasoning
 - Cite sources when using canon/knowledge/web results
 
-**Phase 5 Active:** Full tool integration with Canon-First architecture`;
+**Phase 6 Active:** Two-tier architecture with content generation and validation`;
   }
 
   /**
@@ -334,6 +344,9 @@ export class Tier1Orchestrator {
     const context: ToolExecutionContext = {
       businessProfileId: state.businessProfileId,
       userId: state.userId,
+      conversationId: state.conversationId,
+      messageId: state.messages.length > 0 ? state.messages[0].id : undefined,
+      stream: this.stream,
     };
 
     for (const toolUse of toolUseBlocks) {
@@ -385,6 +398,22 @@ export class Tier1Orchestrator {
               data: {
                 type: 'research_summary',
                 content: result.metadata?.summary || 'Web search completed',
+              },
+            });
+          } else if (name === 'content_execution') {
+            this.stream.send({
+              event: 'analysis',
+              data: {
+                type: 'content_generated',
+                content: `✅ ${result.metadata?.title || 'Content'} generated (${result.metadata?.tokensUsed || 0} tokens)`,
+              },
+            });
+          } else if (name === 'validate_content') {
+            this.stream.send({
+              event: 'analysis',
+              data: {
+                type: 'validation_complete',
+                content: `Validation: ${result.metadata?.validationStatus || 'completed'}`,
               },
             });
           }

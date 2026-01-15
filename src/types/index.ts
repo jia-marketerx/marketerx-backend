@@ -76,7 +76,13 @@ export interface ThinkingEvent {
 export interface AnalysisEvent {
   event: 'analysis';
   data: {
-    type: 'research_summary' | 'knowledge_summary' | 'canon_loaded';
+    type:
+      | 'research_summary'
+      | 'knowledge_summary'
+      | 'canon_loaded'
+      | 'content_generated'
+      | 'validation_complete'
+      | 'content_generation_start';
     content: string;
     sources?: any[];
     metadata?: Record<string, any>;
@@ -87,10 +93,10 @@ export interface ArtifactEvent {
   event: 'artifact';
   data: {
     type: 'start' | 'delta' | 'end';
-    artifactId: string;
+    artifactId?: string;
     content?: string;
     metadata?: {
-      contentType: string;
+      contentType?: string;
       wordCount?: number;
     };
   };
