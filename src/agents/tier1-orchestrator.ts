@@ -179,6 +179,10 @@ export class Tier1Orchestrator {
           // Execute tools and get results
           await this.processToolCalls(toolUseBlocks, state);
 
+          // Check if content_execution was called - if so, we're done after this
+          const hasContentExecution = toolUseBlocks.some(t => t.name === 'content_execution');
+          const hasValidation = toolUseBlocks.some(t => t.name === 'validate_content');
+
           // Add assistant message with tool calls to conversation
           // Ensure we have content blocks
           if (contentBlocks.length > 0) {
@@ -201,8 +205,16 @@ export class Tier1Orchestrator {
 
           state.conversationContext.push(toolResultsMessage);
 
-          // Continue loop to let agent process tool results
-          continueLoop = true;
+          // If content_execution was called, allow ONE more iteration for validation or final response
+          // If validation was called, stop immediately
+          if (hasValidation || (hasContentExecution && loopCount >= 2)) {
+            logger.info('Content generation complete, ending loop');
+            state.response = fullResponse || 'Content generated successfully.';
+            continueLoop = false;
+          } else {
+            // Continue loop to let agent process tool results
+            continueLoop = true;
+          }
         } else {
           // No more tools to call, we're done
           state.response = fullResponse;
@@ -277,15 +289,21 @@ export class Tier1Orchestrator {
 - \`content_execution\`: Generate marketing content (email, ad, landing-page, script) - CALL AFTER gathering context
 - \`validate_content\`: Validate content against canon rules and compliance
 
-**Workflow for Content Generation:**
-1. Load canon for content type (if available - may return 0 rules, that's OK)
-2. Search knowledge for brand/product info (optional - proceed even if 0 results)
+**Workflow for Content Generation (FOLLOW THIS ORDER):**
+1. Load canon for content type (may return 0 rules - that's OK)
+2. Search knowledge for brand/product info (optional - may return 0 results)
 3. (Optional) Web search if user needs current data
-4. **ALWAYS call content_execution** with the best brief you can build (even with limited data)
-5. (Optional) Call validate_content if canon has compliance rules
-6. Present final content to user
+4. **Call content_execution** with the best brief you can build
+5. **AFTER content_execution succeeds**: 
+   - If you have canon compliance rules → call validate_content
+   - Otherwise → STOP calling tools and present the content to user
+6. Present final content and validation results
 
-**IMPORTANT**: Don't get stuck! If canon/knowledge return no results, proceed anyway with content generation using best practices.
+**CRITICAL RULES:**
+- Call each tool ONLY ONCE per request (don't repeat fetch_canon)
+- After content_execution, ONLY call validate_content OR respond to user
+- Don't loop back to earlier steps
+- Don't get stuck! Proceed even with 0 results from canon/knowledge
 
 **Communication Style:**
 - Professional yet conversational
