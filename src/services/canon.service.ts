@@ -7,7 +7,8 @@
 
 import { CanonRepository } from '../repositories/canons.js';
 import { CacheService, CacheLayer } from './cache.service.js';
-import type { Canon, CanonFetchOptions, CanonContentType } from '../types/canon.js';
+import type { Canon, CanonFetchOptions } from '../types/canon.js';
+import { CanonContentType } from '../types/canon.js';
 import { logger } from '../utils/logger.js';
 
 export class CanonService {
@@ -69,7 +70,12 @@ export class CanonService {
 
     try {
       // Pre-load high-priority canons for common content types
-      const contentTypes: CanonContentType[] = ['email', 'ad', 'landing-page', 'script'];
+      const contentTypes: CanonContentType[] = [
+        CanonContentType.Email,
+        CanonContentType.Ad,
+        CanonContentType.LandingPage,
+        CanonContentType.Script,
+      ];
 
       await Promise.all(
         contentTypes.map((type) => this.getHighPriorityCanons(type, 8))

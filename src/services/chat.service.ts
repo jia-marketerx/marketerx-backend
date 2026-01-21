@@ -2,7 +2,7 @@ import { conversationService } from './conversation.service.js';
 import { messageRepository } from '../repositories/messages.js';
 import { agentService } from './agent.service.js';
 import { SSEStream } from '../utils/sse.js';
-import { ChatStreamRequest, Message, ChatError } from '../types/index.js';
+import { ChatStreamRequest, ChatError } from '../types/index.js';
 import { logger } from '../utils/logger.js';
 
 /**
