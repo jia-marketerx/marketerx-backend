@@ -1,27 +1,27 @@
-import { anthropic } from '../lib/anthropic';
-import { config } from '../config/env';
-import { SSEStream } from '../utils/sse';
-import { logger } from '../utils/logger';
+import { anthropic } from '../lib/anthropic.js';
+import { config } from '../config/env.js';
+import { SSEStream } from '../utils/sse.js';
+import { logger } from '../utils/logger.js';
 import {
   buildEmailSystemPrompt,
   buildEmailUserPrompt,
   EmailBrief,
-} from './templates/email.template';
+} from './templates/email.template.js';
 import {
   buildAdSystemPrompt,
   buildAdUserPrompt,
   AdBrief,
-} from './templates/ad.template';
+} from './templates/ad.template.js';
 import {
   buildLandingPageSystemPrompt,
   buildLandingPageUserPrompt,
   LandingPageBrief,
-} from './templates/landing-page.template';
+} from './templates/landing-page.template.js';
 import {
   buildScriptSystemPrompt,
   buildScriptUserPrompt,
   ScriptBrief,
-} from './templates/script.template';
+} from './templates/script.template.js';
 
 export type ContentType = 'email' | 'ad' | 'landing-page' | 'script';
 
