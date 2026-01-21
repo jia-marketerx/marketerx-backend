@@ -1,5 +1,5 @@
-import { supabase } from '../lib/supabase';
-import { logger } from '../utils/logger';
+import { supabase } from '../lib/supabase.js';
+import { logger } from '../utils/logger.js';
 
 export interface Artifact {
   id: string;
