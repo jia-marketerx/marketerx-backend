@@ -123,11 +123,21 @@ export class Tier2Executor {
         };
 
       case 'ad':
-        const adBrief = input.brief as AdBrief;
+        const adBrief = input.brief as AdBrief & { purpose?: string; keyMessage?: string };
+        // Normalize ad brief: map generic fields to ad-specific fields if missing
+        const normalizedAdBrief: AdBrief = {
+          ...adBrief,
+          platform: adBrief.platform || 'Social Media',
+          objective: adBrief.objective || adBrief.purpose || 'Conversion',
+          productService: adBrief.productService || adBrief.keyMessage || 'Product/Service',
+        };
+        // Generate title with fallbacks
+        const platform = normalizedAdBrief.platform || 'Social Media';
+        const objective = normalizedAdBrief.objective || 'Campaign';
         return {
           systemPrompt: buildAdSystemPrompt(),
-          userPrompt: buildAdUserPrompt(adBrief),
-          title: `${adBrief.platform} Ad: ${adBrief.objective}`,
+          userPrompt: buildAdUserPrompt(normalizedAdBrief),
+          title: `${platform} Ad: ${objective}`,
         };
 
       case 'landing-page':

@@ -124,7 +124,7 @@ export function buildAdUserPrompt(brief: AdBrief): string {
 
 **Target Audience:** ${brief.targetAudience}
 
-**Product/Service:** ${brief.productService}
+**Product/Service:** ${brief.productService || 'Product/Service'}
 
 **Unique Value Proposition:** ${brief.uniqueValue || 'Identify unique selling point'}
 

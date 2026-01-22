@@ -128,7 +128,9 @@ export const contentExecutionTool: AnthropicTool = {
         description:
           'Comprehensive brief with all context needed for generation. ' +
           'Should include: purpose, target audience, key message, CTA, tone, frameworks (from canon), ' +
-          'brand guidelines (from knowledge), and any additional context.',
+          'brand guidelines (from knowledge), and any additional context. ' +
+          'For ads: also include platform (Facebook, Instagram, Google, LinkedIn, etc.) and objective (awareness, consideration, conversion) if mentioned by user. ' +
+          'For ads: include productService (product/service name) if available.',
         properties: {
           purpose: { type: 'string' },
           targetAudience: { type: 'string' },
@@ -138,6 +140,10 @@ export const contentExecutionTool: AnthropicTool = {
           frameworks: { type: 'object' },
           brandGuidelines: { type: 'object' },
           additionalContext: { type: 'string' },
+          // Ad-specific optional fields
+          platform: { type: 'string', description: 'Ad platform (Facebook, Instagram, Google, LinkedIn, etc.)' },
+          objective: { type: 'string', description: 'Campaign objective (awareness, consideration, conversion)' },
+          productService: { type: 'string', description: 'Product or service name being advertised' },
         },
         required: ['purpose', 'targetAudience', 'keyMessage', 'cta', 'tone'],
       },

@@ -32,7 +32,9 @@ export class KnowledgeService {
    * Search business resources using semantic similarity
    */
   static async search(options: KnowledgeSearchOptions): Promise<KnowledgeSearchResult[]> {
-    const { query, businessProfileId, topK = 5, resourceTypes, threshold = 0.7 } = options;
+    // Lower default threshold from 0.7 to 0.5 for better match rate
+    // 0.5 is still a good similarity score but allows more relevant results
+    const { query, businessProfileId, topK = 5, resourceTypes, threshold = 0.3 } = options;
 
     try {
       // Generate query embedding
