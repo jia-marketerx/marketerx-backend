@@ -6,9 +6,8 @@
  */
 
 import { supabase } from '../lib/supabase.js';
-import { openai } from '../lib/openai.js';
-import { CacheService, CacheLayer } from './cache.service.js';
 import { logger } from '../utils/logger.js';
+import { generateEmbedding } from '../lib/openai.js';
 
 export interface KnowledgeSearchOptions {
   query: string;
@@ -34,11 +33,21 @@ export class KnowledgeService {
   static async search(options: KnowledgeSearchOptions): Promise<KnowledgeSearchResult[]> {
     // Lower default threshold from 0.7 to 0.5 for better match rate
     // 0.5 is still a good similarity score but allows more relevant results
-    const { query, businessProfileId, topK = 5, resourceTypes, threshold = 0.3 } = options;
+    const { 
+      businessProfileId, 
+      query, 
+      topK = 5, 
+      resourceTypes,
+      threshold = 0.5 
+    } = options;
+    logger.info(`🔍 Options: ${JSON.stringify(options, null, 2)}`);
 
     try {
       // Generate query embedding
-      const embedding = await this.generateEmbedding(query);
+      const embedding = await generateEmbedding(query);
+
+      logger.info(`🔍 Embedding generated for query: ${query}`);
+      logger.info(`🔍 Embedding: ${embedding}`);
 
       // Search across multiple resource tables
       const results = await Promise.all([
@@ -48,6 +57,8 @@ export class KnowledgeService {
         this.searchCaseStudies(businessProfileId, embedding, topK, threshold),
         this.searchHandbooks(businessProfileId, embedding, topK, threshold),
       ]);
+      logger.info(`🔍 Results: ${results}`);
+      logger.info(`🔍 Results length: ${results.length}`);
 
       // Flatten and filter by resource types if specified
       let allResults = results.flat();
@@ -64,27 +75,6 @@ export class KnowledgeService {
       logger.error('❌ Knowledge search error:', error);
       return [];
     }
-  }
-
-  /**
-   * Generate embedding for query (with caching)
-   */
-  private static async generateEmbedding(text: string): Promise<number[]> {
-    const cacheKey = `embedding:${text}`;
-
-    return CacheService.getOrSet(
-      CacheLayer.Knowledge,
-      cacheKey,
-      async () => {
-        const response = await openai.embeddings.create({
-          model: 'text-embedding-3-large',
-          input: text,
-          encoding_format: 'float',
-        });
-
-        return response.data[0].embedding;
-      }
-    );
   }
 
   /**

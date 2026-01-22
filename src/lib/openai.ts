@@ -27,11 +27,13 @@ export async function testOpenAIConnection(): Promise<boolean> {
 
 /**
  * Generate embeddings for semantic search
+ * Note: Database expects 1536 dimensions, so we specify dimensions for text-embedding-3-large
  */
 export async function generateEmbedding(text: string): Promise<number[]> {
   const response = await openai.embeddings.create({
     model: config.models.embedding,
     input: text,
+    dimensions: 1536, // Force 1536 dimensions to match database schema
   });
   return response.data[0].embedding;
 }
