@@ -323,9 +323,23 @@ export class Tier1Orchestrator {
     // Add conversation context (historical messages)
     for (const msg of state.conversationContext) {
       if (msg.role === 'user' || msg.role === 'assistant') {
+        // Validate content - Anthropic requires non-empty content for all messages
+        // except the optional final assistant message
+        const content = this.normalizeMessageContent(msg.content);
+        
+        if (!content) {
+          // Skip messages with empty content and log warning
+          logger.warn('Skipping message with empty content', {
+            conversationId: state.conversationId,
+            messageId: msg.id,
+            role: msg.role,
+          });
+          continue;
+        }
+        
         messages.push({
           role: msg.role,
-          content: msg.content,
+          content: content,
         });
       }
     }
@@ -347,6 +361,50 @@ export class Tier1Orchestrator {
     }
 
     return messages;
+  }
+
+  /**
+   * Normalize message content - handles string, array, null/undefined
+   * Returns null if content is empty/invalid
+   */
+  private normalizeMessageContent(content: any): string | Anthropic.MessageParam['content'] | null {
+    // Handle null/undefined
+    if (content === null || content === undefined) {
+      return null;
+    }
+    
+    // Handle string content
+    if (typeof content === 'string') {
+      const trimmed = content.trim();
+      return trimmed.length > 0 ? trimmed : null;
+    }
+    
+    // Handle array content (tool_use blocks, text blocks, etc.)
+    if (Array.isArray(content)) {
+      // Filter out empty blocks and validate
+      const validBlocks = content.filter((block: any) => {
+        if (!block || typeof block !== 'object') return false;
+        
+        if (block.type === 'text') {
+          return typeof block.text === 'string' && block.text.trim().length > 0;
+        }
+        
+        // tool_use and tool_result blocks are valid if they have required fields
+        if (block.type === 'tool_use') {
+          return block.id && block.name;
+        }
+        
+        if (block.type === 'tool_result') {
+          return block.tool_use_id;
+        }
+        
+        return true; // Allow other block types
+      });
+      
+      return validBlocks.length > 0 ? validBlocks : null;
+    }
+    
+    return null;
   }
 
   /**

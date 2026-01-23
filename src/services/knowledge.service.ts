@@ -38,7 +38,7 @@ export class KnowledgeService {
       query, 
       topK = 5, 
       resourceTypes,
-      threshold = 0.05 
+      threshold = 0.0
     } = options;
     logger.info(`🔍 Options: ${JSON.stringify(options, null, 2)}`);
 
