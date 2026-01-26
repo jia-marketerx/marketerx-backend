@@ -10,7 +10,9 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts",
-    "check-imports": "node scripts/check-imports.js"
+    "check-imports": "node scripts/check-imports.js",
+    "langsmith:check": "tsx scripts/check-langsmith-config.ts",
+    "langsmith:test": "tsx scripts/test-langsmith-connection.ts"
   },
   "keywords": [
     "marketerx",
