@@ -13,6 +13,7 @@ import { logger } from '../utils/logger.js';
 import { Tier2Executor, ContentType } from './tier2-executor.js';
 import { SSEStream } from '../utils/sse.js';
 import { ArtifactRepository } from '../repositories/artifacts.js';
+import { traceToolCall, logTraceCompletion } from '../utils/langsmith.js';
 
 /**
  * Tool definition: fetch-canon
@@ -213,29 +214,58 @@ export interface ToolExecutionResult {
 
 export async function executeFetchCanon(
   input: { category: string; contentType: string },
-  _context: ToolExecutionContext
+  context: ToolExecutionContext
 ): Promise<ToolExecutionResult> {
-  try {
-    logger.info(`🔧 Executing fetch_canon: ${input.category} / ${input.contentType}`);
+  const startTime = Date.now();
+  
+  const tracedFn = traceToolCall(
+    async () => {
+      logger.info(`🔧 Executing fetch_canon: ${input.category} / ${input.contentType}`);
 
-    const canons = await CanonService.fetchCanons({
-      category: input.category === 'all' ? undefined : (input.category as CanonCategory),
-      contentType: input.contentType as CanonContentType,
-    });
+      const canons = await CanonService.fetchCanons({
+        category: input.category === 'all' ? undefined : (input.category as CanonCategory),
+        contentType: input.contentType as CanonContentType,
+      });
 
-    const formatted = CanonService.formatForAI(canons);
+      const formatted = CanonService.formatForAI(canons);
 
-    return {
-      success: true,
-      content: formatted,
+      return {
+        success: true,
+        content: formatted,
+        metadata: {
+          count: canons.length,
+          category: input.category,
+          contentType: input.contentType,
+        },
+      };
+    },
+    {
+      name: 'fetch_canon',
       metadata: {
-        count: canons.length,
+        conversationId: context.conversationId,
+        userId: context.userId,
+        businessProfileId: context.businessProfileId,
+        toolName: 'fetch_canon',
         category: input.category,
         contentType: input.contentType,
       },
-    };
+    }
+  );
+
+  try {
+    const result = await tracedFn();
+    logTraceCompletion('fetch_canon', {
+      duration: Date.now() - startTime,
+      status: 'success',
+    });
+    return result;
   } catch (error: any) {
     logger.error('❌ Error executing fetch_canon:', error);
+    logTraceCompletion('fetch_canon', {
+      duration: Date.now() - startTime,
+      status: 'error',
+      error: error.message,
+    });
     return {
       success: false,
       content: 'Failed to fetch canon data',
@@ -248,28 +278,57 @@ export async function executeKnowledgeSearch(
   input: { query: string; topK?: number; resourceTypes?: string[] },
   context: ToolExecutionContext
 ): Promise<ToolExecutionResult> {
-  try {
-    logger.info(`🔧 Executing knowledge_search: ${input.query}`);
+  const startTime = Date.now();
+  
+  const tracedFn = traceToolCall(
+    async () => {
+      logger.info(`🔧 Executing knowledge_search: ${input.query}`);
 
-    const results = await KnowledgeService.search({
-      query: input.query,
-      businessProfileId: context.businessProfileId,
-      topK: input.topK || 5,
-      resourceTypes: input.resourceTypes,
-    });
-
-    const formatted = KnowledgeService.formatForAI(results);
-
-    return {
-      success: true,
-      content: formatted,
-      metadata: {
-        resultCount: results.length,
+      const results = await KnowledgeService.search({
         query: input.query,
+        businessProfileId: context.businessProfileId,
+        topK: input.topK || 5,
+        resourceTypes: input.resourceTypes,
+      });
+
+      const formatted = KnowledgeService.formatForAI(results);
+
+      return {
+        success: true,
+        content: formatted,
+        metadata: {
+          resultCount: results.length,
+          query: input.query,
+        },
+      };
+    },
+    {
+      name: 'knowledge_search',
+      metadata: {
+        conversationId: context.conversationId,
+        userId: context.userId,
+        businessProfileId: context.businessProfileId,
+        toolName: 'knowledge_search',
+        query: input.query,
+        topK: input.topK || 5,
       },
-    };
+    }
+  );
+
+  try {
+    const result = await tracedFn();
+    logTraceCompletion('knowledge_search', {
+      duration: Date.now() - startTime,
+      status: 'success',
+    });
+    return result;
   } catch (error: any) {
     logger.error('❌ Error executing knowledge_search:', error);
+    logTraceCompletion('knowledge_search', {
+      duration: Date.now() - startTime,
+      status: 'error',
+      error: error.message,
+    });
     return {
       success: false,
       content: 'Failed to search knowledge base',
@@ -280,30 +339,59 @@ export async function executeKnowledgeSearch(
 
 export async function executeWebSearch(
   input: { query: string; searchDepth?: 'basic' | 'advanced'; maxResults?: number },
-  _context: ToolExecutionContext
+  context: ToolExecutionContext
 ): Promise<ToolExecutionResult> {
-  try {
-    logger.info(`🔧 Executing web_search: ${input.query} (${input.searchDepth || 'basic'})`);
+  const startTime = Date.now();
+  
+  const tracedFn = traceToolCall(
+    async () => {
+      logger.info(`🔧 Executing web_search: ${input.query} (${input.searchDepth || 'basic'})`);
 
-    const response = await WebSearchService.search({
-      query: input.query,
-      searchDepth: input.searchDepth || 'basic',
-      maxResults: input.maxResults || 10,
-    });
-
-    const formatted = WebSearchService.formatForAI(response);
-
-    return {
-      success: true,
-      content: formatted,
-      metadata: {
-        resultCount: response.results.length,
-        summary: response.summary,
+      const response = await WebSearchService.search({
         query: input.query,
+        searchDepth: input.searchDepth || 'basic',
+        maxResults: input.maxResults || 10,
+      });
+
+      const formatted = WebSearchService.formatForAI(response);
+
+      return {
+        success: true,
+        content: formatted,
+        metadata: {
+          resultCount: response.results.length,
+          summary: response.summary,
+          query: input.query,
+        },
+      };
+    },
+    {
+      name: 'web_search',
+      metadata: {
+        conversationId: context.conversationId,
+        userId: context.userId,
+        businessProfileId: context.businessProfileId,
+        toolName: 'web_search',
+        query: input.query,
+        searchDepth: input.searchDepth || 'basic',
       },
-    };
+    }
+  );
+
+  try {
+    const result = await tracedFn();
+    logTraceCompletion('web_search', {
+      duration: Date.now() - startTime,
+      status: 'success',
+    });
+    return result;
   } catch (error: any) {
     logger.error('❌ Error executing web_search:', error);
+    logTraceCompletion('web_search', {
+      duration: Date.now() - startTime,
+      status: 'error',
+      error: error.message,
+    });
     return {
       success: false,
       content: 'Failed to perform web search',
@@ -316,47 +404,81 @@ export async function executeContentExecution(
   input: { contentType: ContentType; brief: any },
   context: ToolExecutionContext
 ): Promise<ToolExecutionResult> {
-  try {
-    logger.info(`🔧 Executing content_execution: ${input.contentType}`);
+  const startTime = Date.now();
+  
+  const tracedFn = traceToolCall(
+    async () => {
+      logger.info(`🔧 Executing content_execution: ${input.contentType}`);
 
-    // Initialize Tier 2 executor with stream
-    const tier2 = new Tier2Executor(context.stream);
+      // Initialize Tier 2 executor with stream (Tier 2 will have its own traces)
+      const tier2 = new Tier2Executor(context.stream, {
+        conversationId: context.conversationId,
+        userId: context.userId,
+        businessProfileId: context.businessProfileId,
+        contentType: input.contentType,
+      });
 
-    // Generate content
-    const result = await tier2.execute({
-      contentType: input.contentType,
-      brief: input.brief,
-    });
+      // Generate content
+      const result = await tier2.execute({
+        contentType: input.contentType,
+        brief: input.brief,
+      });
 
-    // Save artifact to database
-    const artifactRepo = new ArtifactRepository();
-    const artifact = await artifactRepo.create({
-      conversationId: context.conversationId,
-      messageId: context.messageId,
-      userId: context.userId,
-      businessProfileId: context.businessProfileId,
-      contentType: input.contentType,
-      title: result.title,
-      content: result.content,
-      metadata: {
-        ...result.metadata,
-        validationStatus: 'passed', // Will be updated after validation
-      },
-    });
-
-    logger.info(`✅ Artifact saved: ${artifact.id}`);
-
-    return {
-      success: true,
-      content: `Content generated successfully!\n\nArtifact ID: ${artifact.id}\n\n${result.content}`,
-      metadata: {
-        artifactId: artifact.id,
+      // Save artifact to database
+      const artifactRepo = new ArtifactRepository();
+      const artifact = await artifactRepo.create({
+        conversationId: context.conversationId,
+        messageId: context.messageId,
+        userId: context.userId,
+        businessProfileId: context.businessProfileId,
+        contentType: input.contentType,
         title: result.title,
-        ...result.metadata,
+        content: result.content,
+        metadata: {
+          ...result.metadata,
+          validationStatus: 'passed', // Will be updated after validation
+        },
+      });
+
+      logger.info(`✅ Artifact saved: ${artifact.id}`);
+
+      return {
+        success: true,
+        content: `Content generated successfully!\n\nArtifact ID: ${artifact.id}\n\n${result.content}`,
+        metadata: {
+          artifactId: artifact.id,
+          title: result.title,
+          ...result.metadata,
+        },
+      };
+    },
+    {
+      name: 'content_execution',
+      metadata: {
+        conversationId: context.conversationId,
+        userId: context.userId,
+        businessProfileId: context.businessProfileId,
+        toolName: 'content_execution',
+        contentType: input.contentType,
       },
-    };
+    }
+  );
+
+  try {
+    const result = await tracedFn();
+    logTraceCompletion('content_execution', {
+      duration: Date.now() - startTime,
+      tokens: result.metadata?.tokensUsed ? { input: 0, output: result.metadata.tokensUsed } : undefined,
+      status: 'success',
+    });
+    return result;
   } catch (error: any) {
     logger.error('❌ Error executing content_execution:', error);
+    logTraceCompletion('content_execution', {
+      duration: Date.now() - startTime,
+      status: 'error',
+      error: error.message,
+    });
     return {
       success: false,
       content: 'Failed to generate content',
@@ -367,13 +489,16 @@ export async function executeContentExecution(
 
 export async function executeValidateContent(
   input: { content: string; contentType: string; canonRules: any },
-  _context: ToolExecutionContext
+  context: ToolExecutionContext
 ): Promise<ToolExecutionResult> {
-  try {
-    logger.info(`🔧 Executing validate_content: ${input.contentType}`);
+  const startTime = Date.now();
+  
+  const tracedFn = traceToolCall(
+    async () => {
+      logger.info(`🔧 Executing validate_content: ${input.contentType}`);
 
-    const issues: string[] = [];
-    const warnings: string[] = [];
+      const issues: string[] = [];
+      const warnings: string[] = [];
 
     // Extract compliance rules from canon
     const complianceRules = input.canonRules?.compliance_rules || [];
@@ -440,18 +565,43 @@ export async function executeValidateContent(
       .filter(Boolean)
       .join('\n');
 
-    return {
-      success: true,
-      content: resultMessage,
+      return {
+        success: true,
+        content: resultMessage,
+        metadata: {
+          validationStatus,
+          issues,
+          warnings,
+          rulesChecked: complianceRules.length,
+        },
+      };
+    },
+    {
+      name: 'validate_content',
       metadata: {
-        validationStatus,
-        issues,
-        warnings,
-        rulesChecked: complianceRules.length,
+        conversationId: context.conversationId,
+        userId: context.userId,
+        businessProfileId: context.businessProfileId,
+        toolName: 'validate_content',
+        contentType: input.contentType,
       },
-    };
+    }
+  );
+
+  try {
+    const result = await tracedFn();
+    logTraceCompletion('validate_content', {
+      duration: Date.now() - startTime,
+      status: 'success',
+    });
+    return result;
   } catch (error: any) {
     logger.error('❌ Error executing validate_content:', error);
+    logTraceCompletion('validate_content', {
+      duration: Date.now() - startTime,
+      status: 'error',
+      error: error.message,
+    });
     return {
       success: false,
       content: 'Failed to validate content',

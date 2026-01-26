@@ -5,6 +5,7 @@ import { SSEStream } from '../utils/sse.js';
 import { logger } from '../utils/logger.js';
 import Anthropic from '@anthropic-ai/sdk';
 import { allTools, executeTool, type ToolExecutionContext } from './tools.js';
+import { traceLLMCall, extractAgentMetadata, logTraceCompletion } from '../utils/langsmith.js';
 
 /**
  * Tier 1 Orchestrator Agent
@@ -53,16 +54,34 @@ export class Tier1Orchestrator {
           toolsAvailable: this.config.tools.length,
         });
 
-        // Call Claude with streaming
-        const response = await anthropic.messages.create({
-          model: this.config.model,
-          max_tokens: this.config.maxTokens,
-          temperature: this.config.temperature,
-          system: this.config.systemPrompt,
-          messages: messages,
-          tools: this.config.tools.length > 0 ? this.config.tools : undefined,
-          stream: true,
-        });
+        // Call Claude with streaming (wrapped with LangSmith tracing)
+        const traceStartTime = Date.now();
+        const tracedClaudeCall = traceLLMCall(
+          async () => {
+            return anthropic.messages.create({
+              model: this.config.model,
+              max_tokens: this.config.maxTokens,
+              temperature: this.config.temperature,
+              system: this.config.systemPrompt,
+              messages: messages,
+              tools: this.config.tools.length > 0 ? this.config.tools : undefined,
+              stream: true,
+            });
+          },
+          {
+            name: `tier1-orchestrator-iteration-${loopCount}`,
+            metadata: {
+              ...extractAgentMetadata(state),
+              tier: 'tier1',
+              iteration: loopCount,
+              messageCount: messages.length,
+              toolsAvailable: this.config.tools.length,
+              stream: true,
+            },
+          }
+        );
+
+        const response = await tracedClaudeCall();
 
         // Process streaming response
         let fullResponse = '';
@@ -171,6 +190,13 @@ export class Tier1Orchestrator {
           input: (state.tokensUsed?.input || 0) + inputTokens,
           output: (state.tokensUsed?.output || 0) + outputTokens,
         };
+
+        // Log trace completion for this iteration
+        logTraceCompletion(`tier1-orchestrator-iteration-${loopCount}`, {
+          duration: Date.now() - traceStartTime,
+          tokens: { input: inputTokens, output: outputTokens },
+          status: 'success',
+        });
 
         // Execute tools if any were called
         if (toolUseBlocks.length > 0 && stopReason === 'tool_use') {

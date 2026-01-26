@@ -22,6 +22,7 @@ import {
   buildScriptUserPrompt,
   ScriptBrief,
 } from './templates/script.template.js';
+import { traceLLMCall, logTraceCompletion, type TraceMetadata } from '../utils/langsmith.js';
 
 export type ContentType = 'email' | 'ad' | 'landing-page' | 'script';
 
@@ -48,9 +49,11 @@ export interface ContentExecutionOutput {
  */
 export class Tier2Executor {
   private stream: SSEStream;
+  private traceMetadata?: TraceMetadata;
 
-  constructor(stream: SSEStream) {
+  constructor(stream: SSEStream, traceMetadata?: TraceMetadata) {
     this.stream = stream;
+    this.traceMetadata = traceMetadata;
   }
 
   /**
@@ -172,6 +175,7 @@ export class Tier2Executor {
     model: string;
     tokensUsed: number;
   }> {
+    const startTime = Date.now();
     let fullContent = '';
     let inputTokens = 0;
     let outputTokens = 0;
@@ -185,19 +189,35 @@ export class Tier2Executor {
       },
     });
 
-    // Stream content generation
-    const stream = await anthropic.messages.stream({
-      model: config.models.tier2,
-      max_tokens: 4096,
-      temperature: 0.7,
-      system: systemPrompt,
-      messages: [
-        {
-          role: 'user',
-          content: userPrompt,
+    // Trace the LLM call
+    const tracedCall = traceLLMCall(
+      async () => {
+        return anthropic.messages.stream({
+          model: config.models.tier2,
+          max_tokens: 4096,
+          temperature: 0.7,
+          system: systemPrompt,
+          messages: [
+            {
+              role: 'user',
+              content: userPrompt,
+            },
+          ],
+        });
+      },
+      {
+        name: 'tier2-content-generation',
+        metadata: {
+          ...this.traceMetadata,
+          tier: 'tier2',
+          model: config.models.tier2,
+          stream: true,
         },
-      ],
-    });
+      }
+    );
+
+    // Stream content generation
+    const stream = await tracedCall();
 
     // Process streaming events
     for await (const event of stream) {
@@ -229,6 +249,13 @@ export class Tier2Executor {
         type: 'end',
         content: '',
       },
+    });
+
+    // Log trace completion
+    logTraceCompletion('tier2-content-generation', {
+      duration: Date.now() - startTime,
+      tokens: { input: inputTokens, output: outputTokens },
+      status: 'success',
     });
 
     return {
