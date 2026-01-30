@@ -49,24 +49,34 @@ export const fetchCanonTool: AnthropicTool = {
 export const knowledgeSearchTool: AnthropicTool = {
   name: 'knowledge_search',
   description:
-    'Search user business resources (brand guidelines, offers, testimonials, case studies, copywriting handbooks) ' +
-    'using semantic similarity. Use this AFTER loading canon to find specific brand/product information.',
+    'Search ALL user business resources using semantic similarity. Use this to find specific business context, customer insights, or marketing intelligence.\n\n' +
+    '**Searchable Resources:**\n' +
+    '- **Offers**: name, description, key_features, tagline, elevator_pitch\n' +
+    '- **Enhanced Offers**: dream_outcome, time_to_result, effort_avoided, believability_mechanism, core_offer, risk_reversal, scarcity_urgency, objections_rebuttals\n' +
+    '- **Avatars**: persona (nickname, bio, quote), demographics (age, income, location, education), pain points (fears, obstacles, objections), goals, psychographics (values, buying style, media habits), cognitive biases, communication preferences\n' +
+    '- **Testimonials**: quote, customer_name, rating, product_or_service\n' +
+    '- **Research Oracle Reports**: market_intelligence, competitive_analysis, audience_psychology, executive_summary, opportunities, threats\n' +
+    '- **Copywriting Handbooks**: strategic foundations, messaging hierarchy, frameworks & formulas, channel-specific guidelines, brand voice\n' +
+    '- **Brand Guidelines**: personality, tone, values, messaging_pillars, target_audience, tagline\n' +
+    '- **Business Resources**: call_transcripts, email_templates, presentations, business_documents, creative_assets, business_data',
   input_schema: {
     type: 'object',
     properties: {
       query: {
         type: 'string',
-        description: 'Search query for finding relevant business resources',
+        description: 'Search query for finding relevant business resources. Be specific about what you need (e.g., "customer pain points about pricing", "testimonials about results", "competitor analysis").',
       },
       topK: {
         type: 'number',
-        description: 'Number of results to return (default: 5)',
+        description: 'Number of results to return per resource type (default: 5). Increase for comprehensive searches.',
         default: 5,
       },
       resourceTypes: {
         type: 'array',
         items: { type: 'string' },
-        description: 'Filter by resource types: brand_guidelines, offer, testimonial, case_study, handbook',
+        description: 
+          'Optional filter by resource types. Leave empty to search ALL types. ' +
+          'Available types: brand_guidelines, offer, testimonial, case_study, handbook, avatar, research_report, business_resource',
       },
     },
     required: ['query'],
@@ -81,7 +91,8 @@ export const webSearchTool: AnthropicTool = {
   name: 'web_search',
   description:
     'Search the web for real-time information, trends, competitor research, or industry insights. ' +
-    'Use this when user asks for current data OR canon/knowledge suggest external research.',
+    'Use this when user asks for current data OR canon/knowledge suggest external research. ' +
+    'For comprehensive research requiring multiple sources and analysis, use deep_web_research instead.',
   input_schema: {
     type: 'object',
     properties: {
@@ -99,6 +110,43 @@ export const webSearchTool: AnthropicTool = {
         type: 'number',
         description: 'Maximum number of results to return (default: 10)',
         default: 10,
+      },
+    },
+    required: ['query'],
+  },
+};
+
+/**
+ * Tool definition: deep-web-research
+ * Comprehensive web research with human-in-the-loop support
+ */
+export const deepWebResearchTool: AnthropicTool = {
+  name: 'deep_web_research',
+  description:
+    'Perform comprehensive web research with multiple queries and analysis. ' +
+    'Use this for in-depth market research, competitive analysis, or complex topics requiring thorough investigation. ' +
+    'This tool may return follow-up questions to ask the user for better results (human-in-the-loop). ' +
+    'When follow-up questions are suggested, ASK THE USER before proceeding with additional research.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      query: {
+        type: 'string',
+        description: 'Main research query or topic',
+      },
+      context: {
+        type: 'string',
+        description: 'Additional context to help focus the research (e.g., industry, use case, specific angle)',
+      },
+      focusAreas: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Specific sub-topics or angles to research (max 3)',
+      },
+      maxResults: {
+        type: 'number',
+        description: 'Maximum number of results to return (default: 20)',
+        default: 20,
       },
     },
     required: ['query'],
@@ -190,6 +238,7 @@ export const allTools: AnthropicTool[] = [
   fetchCanonTool,
   knowledgeSearchTool,
   webSearchTool,
+  deepWebResearchTool,
   contentExecutionTool,
   validateContentTool,
 ];
@@ -362,6 +411,8 @@ export async function executeWebSearch(
           resultCount: response.results.length,
           summary: response.summary,
           query: input.query,
+          needsMoreContext: response.needsMoreContext,
+          followUpSuggestions: response.followUpSuggestions,
         },
       };
     },
@@ -395,6 +446,76 @@ export async function executeWebSearch(
     return {
       success: false,
       content: 'Failed to perform web search',
+      error: error.message,
+    };
+  }
+}
+
+export async function executeDeepWebResearch(
+  input: { query: string; context?: string; focusAreas?: string[]; maxResults?: number },
+  context: ToolExecutionContext
+): Promise<ToolExecutionResult> {
+  const startTime = Date.now();
+  
+  const tracedFn = traceToolCall(
+    async () => {
+      logger.info(`🔬 Executing deep_web_research: ${input.query}`);
+      if (input.focusAreas) {
+        logger.info(`   Focus areas: ${input.focusAreas.join(', ')}`);
+      }
+
+      const response = await WebSearchService.deepResearch({
+        query: input.query,
+        context: input.context,
+        focusAreas: input.focusAreas,
+        maxResults: input.maxResults || 20,
+      });
+
+      const formatted = WebSearchService.formatDeepResearchForAI(response);
+
+      return {
+        success: true,
+        content: formatted,
+        metadata: {
+          resultCount: response.results.length,
+          researchSummary: response.researchSummary,
+          keyFindings: response.keyFindings,
+          confidenceLevel: response.confidenceLevel,
+          suggestedFollowUps: response.suggestedFollowUps,
+          query: input.query,
+        },
+      };
+    },
+    {
+      name: 'deep_web_research',
+      metadata: {
+        conversationId: context.conversationId,
+        userId: context.userId,
+        businessProfileId: context.businessProfileId,
+        toolName: 'deep_web_research',
+        query: input.query,
+        focusAreas: input.focusAreas,
+      },
+    }
+  );
+
+  try {
+    const result = await tracedFn();
+    logTraceCompletion('deep_web_research', {
+      duration: Date.now() - startTime,
+      status: 'success',
+    });
+    return result;
+  } catch (error: any) {
+    logger.error('❌ Error executing deep_web_research:', error);
+    logTraceCompletion('deep_web_research', {
+      duration: Date.now() - startTime,
+      status: 'error',
+      error: error.message,
+    });
+    return {
+      success: false,
+      content: 'Failed to perform deep web research',
       error: error.message,
     };
   }
@@ -625,6 +746,8 @@ export async function executeTool(
       return executeKnowledgeSearch(toolInput, context);
     case 'web_search':
       return executeWebSearch(toolInput, context);
+    case 'deep_web_research':
+      return executeDeepWebResearch(toolInput, context);
     case 'content_execution':
       return executeContentExecution(toolInput, context);
     case 'validate_content':
